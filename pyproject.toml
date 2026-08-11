@@ -1,0 +1,31 @@
+[project]
+name = "home-network-api-server"
+version = "0.1.0"
+description = "Archer A10 に接続中のクライアント一覧を収集し、REST API で返す"
+readme = "README.md"
+authors = [
+    { name = "uribo", email = "ur1b0.dev@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "tplinkrouterc6u>=5.28.1",
+    "uvicorn>=0.34",
+]
+
+[project.scripts]
+home-network-collector = "home_network_api_server.collector:main"
+home-network-api = "home_network_api_server.api:main"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28",
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
