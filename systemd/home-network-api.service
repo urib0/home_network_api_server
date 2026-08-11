@@ -1,0 +1,49 @@
+[Unit]
+Description=収集済みクライアント一覧を返す API サーバー
+Documentation=https://github.com/uribo/home_network_api_server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=hnapi
+Group=hnapi
+
+# collector と同じ JSON を読む。ルーターの認証情報は不要
+StateDirectory=home-network-api-server
+Environment=CLIENTS_JSON_PATH=/var/lib/home-network-api-server/clients.json
+Environment=API_HOST=0.0.0.0
+Environment=API_PORT=8000
+
+WorkingDirectory=/opt/home-network-api-server
+ExecStart=/opt/home-network-api-server/.venv/bin/home-network-api
+
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=home-network-api
+
+# --- 権限の絞り込み ---
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+# JSON を読むだけなので書き込み権限は不要
+ReadOnlyPaths=/var/lib/home-network-api-server
+
+[Install]
+WantedBy=multi-user.target
