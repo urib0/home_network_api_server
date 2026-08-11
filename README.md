@@ -87,8 +87,8 @@ uv run pytest
 # 1. uv を全ユーザーから使える場所へ入れる（未導入なら）
 curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
 
-# 2. リポジトリを /opt へ配置する（別の場所に clone 済みなら移動する）
-sudo mv ~/home_network_api_server /opt/home-network-api-server
+# 2. リポジトリを配置する（場所は任意。ここでは /opt）
+sudo git clone <このリポジトリ> /opt/home-network-api-server
 cd /opt/home-network-api-server
 
 # 3. インストール（ユーザー作成・依存同期・ユニット配置・有効化）
@@ -107,6 +107,10 @@ systemctl list-timers home-network-collector.timer
 journalctl -u home-network-collector -u home-network-api -f
 curl -s http://localhost:8000/api/clients | jq
 ```
+
+配置先は `install.sh` 自身の位置から決まるので、どこに clone しても動く。
+ユニットファイル内のパスは配置先に置換して `/etc/systemd/system/` へインストールされる。
+所有権は変更しないため、clone した本人が `sudo` 無しで `git pull` できる。
 
 ### Python 3.13 の置き場について
 

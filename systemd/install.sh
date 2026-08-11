@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # ラズパイ (Debian 12) へのインストール手順をまとめたスクリプト。
-# リポジトリを /opt/home-network-api-server に配置した状態で、リポジトリルートから実行する。
+# リポジトリをどこに置いても動く (配置場所はスクリプト自身の位置から決まる)。
 #
 #   sudo ./systemd/install.sh
 #
 # 認証情報 (/etc/home-network-api-server/router.env) は別途手で編集すること。
 set -euo pipefail
 
-APP_DIR=/opt/home-network-api-server
+# clone 先のディレクトリ名は環境によって変わる (リポジトリ名はアンダースコア区切り、
+# ドキュメント上の既定はハイフン区切り) ため、固定せずスクリプトの位置から求める。
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+APP_DIR=$(dirname -- "$SCRIPT_DIR")
+
+# ユニットファイルに書かれている既定パス。実際の APP_DIR へ置換して配置する。
+UNIT_DEFAULT_DIR=/opt/home-network-api-server
+
 CONF_DIR=/etc/home-network-api-server
 SERVICE_USER=hnapi
 
@@ -22,10 +29,13 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-if [[ ! -d $APP_DIR ]]; then
-    echo "$APP_DIR がありません。リポジトリをここに配置してください。" >&2
+if [[ ! -f $APP_DIR/pyproject.toml ]]; then
+    echo "$APP_DIR がリポジトリのルートに見えません。" >&2
+    echo "このスクリプトはリポジトリ内の systemd/ に置いたまま実行してください。" >&2
     exit 1
 fi
+
+echo "==> 配置先: $APP_DIR"
 
 # --- サービス用ユーザー (ログイン不可・ホーム無し) ---
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
@@ -47,8 +57,15 @@ mkdir -p "$UV_PYTHON_INSTALL_DIR"
 # hnapi がインタプリタ本体を読めるようにする (.venv/bin/python がここを指す)
 chmod -R a+rX "$UV_PYTHON_INSTALL_DIR"
 
-chown -R root:"$SERVICE_USER" "$APP_DIR"
-chmod -R o-rwx "$APP_DIR"
+# hnapi が読めるようにする。所有権は変えない (git clone した本人が sudo 無しで
+# git pull できなくなるため)。APP_DIR に秘密情報は置かない — 認証情報は CONF_DIR。
+chmod -R a+rX "$APP_DIR"
+
+# ローカル検証用の .env をうっかり置いていた場合に備えて閉じる
+if [[ -f $APP_DIR/.env ]]; then
+    chmod 600 "$APP_DIR/.env"
+    echo "警告: $APP_DIR/.env があります。サービスは $CONF_DIR/router.env を読みます。" >&2
+fi
 
 # 起動前に、サービスユーザーで実際に実行できるかを確かめる
 echo "==> サービスユーザーでの実行可否を確認"
@@ -69,10 +86,13 @@ if [[ ! -f $CONF_DIR/router.env ]]; then
 fi
 
 # --- systemd ユニット ---
+# ユニット内の既定パスを実際の APP_DIR に置換して配置する
 echo "==> systemd ユニットを配置"
-install -m 0644 "$APP_DIR"/systemd/home-network-collector.service /etc/systemd/system/
-install -m 0644 "$APP_DIR"/systemd/home-network-collector.timer /etc/systemd/system/
-install -m 0644 "$APP_DIR"/systemd/home-network-api.service /etc/systemd/system/
+for unit in home-network-collector.service home-network-collector.timer home-network-api.service; do
+    sed "s|$UNIT_DEFAULT_DIR|$APP_DIR|g" "$APP_DIR/systemd/$unit" \
+        > "/etc/systemd/system/$unit"
+    chmod 0644 "/etc/systemd/system/$unit"
+done
 systemctl daemon-reload
 
 echo "==> 有効化"
