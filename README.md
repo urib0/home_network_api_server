@@ -84,16 +84,20 @@ uv run pytest
 ## ラズパイ（Debian 12）へのインストール
 
 ```bash
-# uv を入れる（未導入なら）
+# 1. uv を全ユーザーから使える場所へ入れる（未導入なら）
 curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
 
-sudo git clone <このリポジトリ> /opt/home-network-api-server
+# 2. リポジトリを /opt へ配置する（別の場所に clone 済みなら移動する）
+sudo mv ~/home_network_api_server /opt/home-network-api-server
 cd /opt/home-network-api-server
+
+# 3. インストール（ユーザー作成・依存同期・ユニット配置・有効化）
 sudo ./systemd/install.sh
 
-sudo systemctl edit --full home-network-collector.service   # 必要なら間隔などを調整
-sudoedit /etc/home-network-api-server/router.env            # パスワードを設定
-sudo systemctl start home-network-collector.service         # 初回取得
+# 4. パスワードを設定して定期取得を開始
+sudoedit /etc/home-network-api-server/router.env
+sudo systemctl start home-network-collector.service   # 初回取得
+sudo systemctl start home-network-collector.timer     # 定期取得
 ```
 
 確認:
@@ -103,5 +107,16 @@ systemctl list-timers home-network-collector.timer
 journalctl -u home-network-collector -u home-network-api -f
 curl -s http://localhost:8000/api/clients | jq
 ```
+
+### Python 3.13 の置き場について
+
+Debian 12 の標準 Python は 3.11 なので、uv が 3.13 をダウンロードする。
+既定の置き場（`~/.local/share/uv/python`）は `sudo` 実行だと `/root` 配下になり、
+`.venv/bin/python` がそこへの symlink になってしまう。サービスユーザー `hnapi` は
+`/root`（0700）を辿れず、`ProtectHome=true` でも遮断されるため起動に失敗する。
+
+`install.sh` は `UV_PYTHON_INSTALL_DIR=/opt/uv-python` を設定してこれを避け、
+インストールの最後に `hnapi` で実際に import できるかを検証する。
+手動で `uv sync` する場合も同じ環境変数を指定すること。
 
 取得間隔は `systemd/home-network-collector.timer` の `OnUnitActiveSec` で調整する（既定 5 分）。
