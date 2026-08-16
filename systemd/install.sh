@@ -21,6 +21,11 @@ XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 CONF_DIR="$XDG_CONFIG_HOME/home-network-api-server"
 UNIT_DIR="$XDG_CONFIG_HOME/systemd/user"
 
+# 収集結果の置き場。ユニット側の CLIENTS_JSON_PATH と一致させること。
+# systemd の StateDirectory= / %S は使わない (user unit での解決先が
+# systemd 252 では ~/.config、新しい版では ~/.local/state と食い違うため)。
+STATE_DIR="$HOME/.local/state/home-network-api-server"
+
 # root で実行すると root のホーム配下に入ってしまい、意図と食い違う
 if [[ $EUID -eq 0 ]]; then
     echo "root では実行しないでください。サービスを動かしたいユーザー自身で実行します:" >&2
@@ -68,6 +73,17 @@ chmod 700 "$CONF_DIR"
 if [[ ! -f $CONF_DIR/router.env ]]; then
     echo "==> $CONF_DIR/router.env を作成 (パスワードを編集してください)"
     install -m 0600 "$APP_DIR/systemd/router.env.example" "$CONF_DIR/router.env"
+fi
+
+# --- 状態ディレクトリ ---
+# 収集時に storage.write_snapshot() も mkdir するが、先に作っておくと
+# 初回収集前でも置き場が分かってよい。
+mkdir -p "$STATE_DIR"
+
+# 旧構成 (StateDirectory= を使っていた頃) の置き土産に気付けるようにする
+if [[ -f $CONF_DIR/clients.json ]]; then
+    echo "注意: $CONF_DIR/clients.json は旧構成の残骸です。" >&2
+    echo "  現在の保存先は $STATE_DIR/clients.json なので削除して構いません。" >&2
 fi
 
 # --- systemd ユニット ---

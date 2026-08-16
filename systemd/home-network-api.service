@@ -7,9 +7,9 @@ Documentation=https://github.com/uribo/home_network_api_server
 [Service]
 Type=exec
 
-# collector と同じ JSON を読む。ルーターの認証情報は不要
-StateDirectory=home-network-api-server
-Environment=CLIENTS_JSON_PATH=%S/home-network-api-server/clients.json
+# collector と同じ JSON を読む。ルーターの認証情報は不要。
+# パスは collector 側と同じ理由で直書きする (%S はバージョンで解決先が変わる)
+Environment=CLIENTS_JSON_PATH=%h/.local/state/home-network-api-server/clients.json
 Environment=API_HOST=0.0.0.0
 Environment=API_PORT=8000
 

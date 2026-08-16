@@ -56,7 +56,7 @@ GET /api/clients
 | `ROUTER_USERNAME` | `admin` | collector | 管理ユーザー名 |
 | `ROUTER_PASSWORD` | （必須） | collector | 管理パスワード。未設定なら終了コード 2 |
 | `ROUTER_TIMEOUT` | `10` | collector | HTTP タイムアウト秒 |
-| `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス（`$XDG_STATE_HOME` に従う） |
+| `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス。未設定時のみ `$XDG_STATE_HOME` に従う（systemd ユニットは常に明示的に渡す） |
 | `API_HOST` | `0.0.0.0` | api | 待ち受けアドレス |
 | `API_PORT` | `8000` | api | 待ち受けポート |
 

@@ -11,9 +11,11 @@ Type=oneshot
 # %E はユーザーインスタンスでは ~/.config に解決される
 EnvironmentFile=%E/home-network-api-server/router.env
 
-# %S はユーザーインスタンスでは ~/.local/state。ディレクトリは systemd が作る
-StateDirectory=home-network-api-server
-Environment=CLIENTS_JSON_PATH=%S/home-network-api-server/clients.json
+# 保存先はパスを直に書く。%S / StateDirectory= は使わない —
+# user unit での %S の基点は systemd 252 (Debian 12) では $XDG_CONFIG_HOME、
+# 新しい版では $XDG_STATE_HOME と、バージョンによって解決先が変わるため。
+# ディレクトリは storage.write_snapshot() が mkdir(parents=True) で作る。
+Environment=CLIENTS_JSON_PATH=%h/.local/state/home-network-api-server/clients.json
 
 WorkingDirectory=%h/home-network-api-server
 ExecStart=%h/home-network-api-server/.venv/bin/home-network-collector

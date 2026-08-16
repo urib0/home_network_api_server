@@ -18,7 +18,11 @@ def default_clients_json_path() -> Path:
 
     サービスはユーザー権限で動くので、システム全体の /var/lib ではなく
     XDG の状態ディレクトリ（既定で ~/.local/state）配下に置く。
-    systemd ユニット側は StateDirectory= で同じ場所を明示している。
+
+    なお systemd ユニットは CLIENTS_JSON_PATH を明示的に渡すため、この既定値は
+    使われない。ユニット側は %h/.local/state/... と直に書いており
+    XDG_STATE_HOME を見ない（systemd の %S がバージョンで解決先を変えるのを
+    避けるため）ので、XDG_STATE_HOME を変えている環境では両者がずれる。
     """
     state_home = os.environ.get("XDG_STATE_HOME")
     base = Path(state_home) if state_home else Path.home() / ".local" / "state"

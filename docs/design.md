@@ -186,11 +186,19 @@ systemd の**ユーザーインスタンス**（`systemctl --user`）に登録�
 | アプリ配置先 | ホーム配下の任意の場所（`install.sh` の位置から決まる） |
 | ユニット | `~/.config/systemd/user/`（`%h/...` を実パスへ置換して配置） |
 | 認証情報 | `~/.config/home-network-api-server/router.env`（`0600`） |
-| 状態ファイル | `~/.local/state/home-network-api-server/clients.json`（`StateDirectory=` で systemd が作成） |
+| 状態ファイル | `~/.local/state/home-network-api-server/clients.json` |
 
-ユニット内では `%h`（ホーム）/ `%E`（`~/.config`）/ `%S`（`~/.local/state`）の
-指定子を使い、ユーザー名をハードコードしない。`%h` だけは clone 先が任意なので
+ユニット内では `%h`（ホーム）/ `%E`（`$XDG_CONFIG_HOME`）の指定子を使い、
+ユーザー名をハードコードしない。`%h` だけは clone 先が任意なので
 `install.sh` が実パスへ置換する。
+
+**`StateDirectory=` / `%S` を使わない理由** — user unit におけるこれらの基点は
+systemd のバージョンで食い違う。Debian 12（systemd 252）では `$XDG_CONFIG_HOME`
+（`~/.config`）に解決され、`$XDG_STATE_HOME`（`~/.local/state`）になるのは
+それより新しい版。使うと OS 更新で保存先が黙って移動しうるので、
+`%h/.local/state/...` と直に書いている。ディレクトリは
+`storage.write_snapshot()` が `mkdir(parents=True)` で作るため、
+systemd に作らせる必要はない（`install.sh` も先回りして作る）。
 
 **専用ユーザー（`hnapi`）+ `/opt` をやめた理由** — 当初はシステムユニットとして
 `--system --no-create-home` のサービスユーザーで動かしていた。より堅い構成ではあるが、
