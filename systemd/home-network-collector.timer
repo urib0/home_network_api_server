@@ -5,8 +5,10 @@ Documentation=https://github.com/uribo/home_network_api_server
 [Timer]
 Unit=home-network-collector.service
 
-# 起動 1 分後に初回、以降は前回の実行開始から 5 分ごと
-OnBootSec=1min
+# ユーザーインスタンス起動の 1 分後に初回、以降は前回の実行開始から 5 分ごと。
+# ユーザーインスタンス側では OnBootSec ではなく OnStartupSec を使う
+# (linger 有効時はほぼ同時に起動するので実質的な差は無い)。
+OnStartupSec=1min
 OnUnitActiveSec=5min
 
 # 複数タイマーの発火が重ならないよう 30 秒までランダムに散らす

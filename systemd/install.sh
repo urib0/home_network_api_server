@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ラズパイ (Debian 12) へのインストール手順をまとめたスクリプト。
+# systemd のユーザーインスタンスに、実行ユーザー自身の権限で登録する。
 # リポジトリをどこに置いても動く (配置場所はスクリプト自身の位置から決まる)。
 #
-#   sudo ./systemd/install.sh
+#   ./systemd/install.sh          # sudo は不要
 #
-# 認証情報 (/etc/home-network-api-server/router.env) は別途手で編集すること。
+# 認証情報 (~/.config/home-network-api-server/router.env) は別途手で編集すること。
 set -euo pipefail
 
 # clone 先のディレクトリ名は環境によって変わる (リポジトリ名はアンダースコア区切り、
@@ -13,19 +14,17 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 APP_DIR=$(dirname -- "$SCRIPT_DIR")
 
 # ユニットファイルに書かれている既定パス。実際の APP_DIR へ置換して配置する。
-UNIT_DEFAULT_DIR=/opt/home-network-api-server
+# %h は systemd の指定子 (ユーザーのホーム) だが、clone 先は任意なので置換が必要。
+UNIT_DEFAULT_DIR='%h/home-network-api-server'
 
-CONF_DIR=/etc/home-network-api-server
-SERVICE_USER=hnapi
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+CONF_DIR="$XDG_CONFIG_HOME/home-network-api-server"
+UNIT_DIR="$XDG_CONFIG_HOME/systemd/user"
 
-# Debian 12 の標準 Python は 3.11 なので、uv が 3.13 をダウンロードする。
-# 既定の置き場 (~/.local/share/uv/python) は sudo 実行だと /root 配下になり、
-# .venv/bin/python がそこへの symlink になる。hnapi は /root (0700) を辿れず、
-# サービス側の ProtectHome=true でも遮断されるため、共有パスに置く。
-export UV_PYTHON_INSTALL_DIR=/opt/uv-python
-
-if [[ $EUID -ne 0 ]]; then
-    echo "root で実行してください: sudo $0" >&2
+# root で実行すると root のホーム配下に入ってしまい、意図と食い違う
+if [[ $EUID -eq 0 ]]; then
+    echo "root では実行しないでください。サービスを動かしたいユーザー自身で実行します:" >&2
+    echo "  ./systemd/install.sh" >&2
     exit 1
 fi
 
@@ -35,31 +34,27 @@ if [[ ! -f $APP_DIR/pyproject.toml ]]; then
     exit 1
 fi
 
-echo "==> 配置先: $APP_DIR"
-
-# --- サービス用ユーザー (ログイン不可・ホーム無し) ---
-if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
-    echo "==> ユーザー $SERVICE_USER を作成"
-    useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
-fi
-
-# --- 依存関係の同期 ---
-echo "==> 依存関係を同期"
-UV_BIN=$(command -v uv || true)
-if [[ -z $UV_BIN ]]; then
-    echo "uv が見つかりません。先に導入してください:" >&2
-    echo "  curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh" >&2
+# systemctl --user は XDG_RUNTIME_DIR / DBus 経由でユーザーインスタンスに繋ぐ。
+# su で切り替えた直後などでは繋がらないことがあるので先に確かめる。
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+    echo "systemd のユーザーインスタンスに接続できません。" >&2
+    echo "そのユーザーで直接ログイン (ssh) してから実行してください。" >&2
+    echo "  su で切り替えた場合は 'machinectl shell $USER@' などを使う。" >&2
     exit 1
 fi
-mkdir -p "$UV_PYTHON_INSTALL_DIR"
-"$UV_BIN" sync --frozen --no-dev --directory "$APP_DIR"
 
-# hnapi がインタプリタ本体を読めるようにする (.venv/bin/python がここを指す)
-chmod -R a+rX "$UV_PYTHON_INSTALL_DIR"
+echo "==> 配置先: $APP_DIR"
 
-# hnapi が読めるようにする。所有権は変えない (git clone した本人が sudo 無しで
-# git pull できなくなるため)。APP_DIR に秘密情報は置かない — 認証情報は CONF_DIR。
-chmod -R a+rX "$APP_DIR"
+# --- 依存関係の同期 ---
+# 実行ユーザーと同じユーザーで sync するので、uv が入れる Python
+# (~/.local/share/uv/python) をそのまま参照できる。置き場の調整は不要。
+echo "==> 依存関係を同期"
+if ! command -v uv >/dev/null 2>&1; then
+    echo "uv が見つかりません。先に導入してください:" >&2
+    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+    exit 1
+fi
+uv sync --frozen --no-dev --directory "$APP_DIR"
 
 # ローカル検証用の .env をうっかり置いていた場合に備えて閉じる
 if [[ -f $APP_DIR/.env ]]; then
@@ -67,37 +62,38 @@ if [[ -f $APP_DIR/.env ]]; then
     echo "警告: $APP_DIR/.env があります。サービスは $CONF_DIR/router.env を読みます。" >&2
 fi
 
-# 起動前に、サービスユーザーで実際に実行できるかを確かめる
-echo "==> サービスユーザーでの実行可否を確認"
-if ! runuser -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/python" -c \
-        'import home_network_api_server' 2>/dev/null; then
-    echo "エラー: $SERVICE_USER が .venv を実行できません。" >&2
-    echo "  $APP_DIR/.venv/bin/python の symlink 先の権限を確認してください:" >&2
-    readlink -f "$APP_DIR/.venv/bin/python" >&2
-    exit 1
-fi
-
 # --- 認証情報 ---
 mkdir -p "$CONF_DIR"
+chmod 700 "$CONF_DIR"
 if [[ ! -f $CONF_DIR/router.env ]]; then
     echo "==> $CONF_DIR/router.env を作成 (パスワードを編集してください)"
-    install -o root -g "$SERVICE_USER" -m 0640 \
-        "$APP_DIR/systemd/router.env.example" "$CONF_DIR/router.env"
+    install -m 0600 "$APP_DIR/systemd/router.env.example" "$CONF_DIR/router.env"
 fi
 
 # --- systemd ユニット ---
 # ユニット内の既定パスを実際の APP_DIR に置換して配置する
 echo "==> systemd ユニットを配置"
+mkdir -p "$UNIT_DIR"
 for unit in home-network-collector.service home-network-collector.timer home-network-api.service; do
-    sed "s|$UNIT_DEFAULT_DIR|$APP_DIR|g" "$APP_DIR/systemd/$unit" \
-        > "/etc/systemd/system/$unit"
-    chmod 0644 "/etc/systemd/system/$unit"
+    sed "s|$UNIT_DEFAULT_DIR|$APP_DIR|g" "$APP_DIR/systemd/$unit" > "$UNIT_DIR/$unit"
+    chmod 0644 "$UNIT_DIR/$unit"
 done
-systemctl daemon-reload
+systemctl --user daemon-reload
+
+# --- ログアウト後もサービスを動かす ---
+# linger が無いと、ログアウト時にユーザーインスタンスごと停止する。
+if [[ $(loginctl show-user "$USER" --property=Linger --value 2>/dev/null) != yes ]]; then
+    echo "==> linger を有効化 (ログアウト後も動かすため)"
+    if ! loginctl enable-linger "$USER" 2>/dev/null; then
+        echo "警告: linger を有効化できませんでした。手動で実行してください:" >&2
+        echo "  sudo loginctl enable-linger $USER" >&2
+        echo "  (これが無いと、ログアウト時にサービスが止まります)" >&2
+    fi
+fi
 
 echo "==> 有効化"
-systemctl enable --now home-network-api.service
-systemctl enable home-network-collector.timer
+systemctl --user enable --now home-network-api.service
+systemctl --user enable home-network-collector.timer
 
 # パスワードが雛形のままなら timer は起動しない (5 分ごとに失敗ログが出るだけなので)
 if grep -q '^ROUTER_PASSWORD=ここに' "$CONF_DIR/router.env"; then
@@ -105,21 +101,21 @@ if grep -q '^ROUTER_PASSWORD=ここに' "$CONF_DIR/router.env"; then
 
 インストール完了。ただしパスワードが未設定です。
 
-  1. パスワードを設定:   sudoedit $CONF_DIR/router.env
-  2. 初回取得を手動実行: sudo systemctl start home-network-collector.service
-  3. 定期取得を開始:     sudo systemctl start home-network-collector.timer
+  1. パスワードを設定:   \${EDITOR:-nano} $CONF_DIR/router.env
+  2. 初回取得を手動実行: systemctl --user start home-network-collector.service
+  3. 定期取得を開始:     systemctl --user start home-network-collector.timer
   4. 結果を確認:         curl http://localhost:8000/api/clients
-  5. ログ:               journalctl -u home-network-collector -u home-network-api -f
+  5. ログ:               journalctl --user -u home-network-collector -u home-network-api -f
 EOF
 else
-    systemctl start home-network-collector.timer
-    systemctl start home-network-collector.service
+    systemctl --user start home-network-collector.timer
+    systemctl --user start home-network-collector.service
     cat <<EOF
 
 インストール完了。
 
   結果を確認: curl http://localhost:8000/api/clients
-  タイマー:   systemctl list-timers home-network-collector.timer
-  ログ:       journalctl -u home-network-collector -u home-network-api -f
+  タイマー:   systemctl --user list-timers home-network-collector.timer
+  ログ:       journalctl --user -u home-network-collector -u home-network-api -f
 EOF
 fi

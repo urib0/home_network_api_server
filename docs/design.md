@@ -32,8 +32,9 @@ HTTP で取れるようにする。
         └─────────────────────┬──────────────────────┘
                               │ os.replace による原子的な上書き
                  ┌────────────▼─────────────┐
-                 │ /var/lib/home-network-   │
-                 │   api-server/clients.json│
+                 │ ~/.local/state/home-     │
+                 │   network-api-server/    │
+                 │   clients.json           │
                  └────────────┬─────────────┘
                               │ リクエストごとに読む
         ┌─────────────────────▼──────────────────────┐
@@ -51,8 +52,7 @@ HTTP で取れるようにする。
 | 応答速度 | API はローカルファイルを読むだけ。ルーターへの HTTP 往復（数百 ms〜数秒）を待たない |
 | ルーターへの負荷 | API のリクエスト数に関係なく、取得は 5 分に 1 回で一定 |
 | 障害の切り分け | ルーターが落ちても API は最後の内容を返す。`updated_at` で鮮度が判断できる |
-| 認証情報の範囲 | ルーターのパスワードは collector 側にしか渡らない。API サービスは環境変数を持たない |
-| 権限 | collector は JSON への書き込み権、API は読み取り権のみ（`ReadOnlyPaths`） |
+| 認証情報の範囲 | ルーターのパスワードは collector 側にしか渡らない。API サービスは `EnvironmentFile` を持たない |
 
 ## 3. データ設計
 
@@ -177,19 +177,45 @@ src/home_network_api_server/
 
 ### ユーザーと配置
 
+systemd の**ユーザーインスタンス**（`systemctl --user`）に登録し、
+利用者自身の権限で動かす。専用のサービスユーザーは作らない。
+
 | 項目 | 値 |
 | --- | --- |
-| サービスユーザー | `hnapi`（`--system --no-create-home --shell /usr/sbin/nologin`） |
-| アプリ配置先 | `/opt/home-network-api-server` |
-| 認証情報 | `/etc/home-network-api-server/router.env`（`root:hnapi`, `0640`） |
-| 状態ファイル | `/var/lib/home-network-api-server/clients.json`（`StateDirectory=` で systemd が作成） |
+| 実行ユーザー | ログインユーザー本人（`sudo` 不要） |
+| アプリ配置先 | ホーム配下の任意の場所（`install.sh` の位置から決まる） |
+| ユニット | `~/.config/systemd/user/`（`%h/...` を実パスへ置換して配置） |
+| 認証情報 | `~/.config/home-network-api-server/router.env`（`0600`） |
+| 状態ファイル | `~/.local/state/home-network-api-server/clients.json`（`StateDirectory=` で systemd が作成） |
+
+ユニット内では `%h`（ホーム）/ `%E`（`~/.config`）/ `%S`（`~/.local/state`）の
+指定子を使い、ユーザー名をハードコードしない。`%h` だけは clone 先が任意なので
+`install.sh` が実パスへ置換する。
+
+**専用ユーザー（`hnapi`）+ `/opt` をやめた理由** — 当初はシステムユニットとして
+`--system --no-create-home` のサービスユーザーで動かしていた。より堅い構成ではあるが、
+
+- `ProtectHome=true` と共存できず、アプリをホーム配下に置けない
+- サービスユーザーが他ユーザーのホーム（`0700`）を辿れない
+- uv が入れる Python が `sudo` 実行だと `/root` 配下に落ち、`.venv/bin/python` の
+  symlink 先を辿れなくなる（`UV_PYTHON_INSTALL_DIR=/opt/uv-python` での回避が必要だった）
+
+と、インストール手順の複雑さが実際の脅威に見合わない。攻撃者が自宅 LAN 内に
+到達している時点で他に守るものが多く、この 1 プロセスの分離で得られる差は小さい、
+という判断で単純さを取った。
+
+### linger
+
+ユーザーインスタンスは既定でログアウト時に停止する。`loginctl enable-linger` で
+ブート時起動・ログアウト後も継続するようにする。`install.sh` が自動で試み、
+polkit に弾かれた場合のみ `sudo loginctl enable-linger $USER` を案内する。
 
 ### systemd ユニット
 
 | ユニット | 種別 | 役割 |
 | --- | --- | --- |
-| `home-network-collector.service` | `Type=oneshot` | 1 回取得して終わる |
-| `home-network-collector.timer` | timer | `OnBootSec=1min`, `OnUnitActiveSec=5min` |
+| `home-network-collector.service` | `Type=oneshot` | 1 回取得して終わる。timer 起動なので `[Install]` は持たない |
+| `home-network-collector.timer` | timer | `OnStartupSec=1min`, `OnUnitActiveSec=5min` |
 | `home-network-api.service` | `Type=exec` | uvicorn 常駐。`Restart=on-failure` |
 
 **timer + oneshot を選んだ理由** — Python 内で `while True: sleep(300)` を回すより、
@@ -202,10 +228,25 @@ src/home_network_api_server/
 **取得間隔 5 分** — Archer A10 の管理画面へのログインは同時セッション数に上限があり、
 短すぎる間隔は他の管理操作を妨げる。DHCP リース時間（実測で 2 時間前後）と比べても十分に細かい。
 
+**`network-online.target` を使わない** — ユーザーインスタンスにこの target は存在しない。
+API は `0.0.0.0` への bind なのでネットワーク未接続でも起動でき、collector は
+初回に失敗しても 5 分後の発火で回復するため、順序付けは不要と判断した。
+
 ### ハードニング
 
-両サービスに `NoNewPrivileges` / `ProtectSystem=strict` / `ProtectHome` / `CapabilityBoundingSet=` などを設定。
-API サービスは JSON を読むだけなので `ReadOnlyPaths=/var/lib/home-network-api-server` を追加している。
+seccomp / prctl ベースのものだけを両サービスに設定する
+（`NoNewPrivileges` / `RestrictAddressFamilies` / `RestrictNamespaces` /
+`RestrictRealtime` / `LockPersonality` / `MemoryDenyWriteExecute` /
+`SystemCallArchitectures`）。これらは追加の準備なしにユーザーインスタンスでも効く。
+
+一方 mount namespace ベースのもの（`ProtectSystem` / `ProtectHome` / `PrivateTmp` /
+`PrivateDevices` / `ProtectKernel*` / `ReadOnlyPaths`）は外した。非特権ユーザーでは
+unprivileged userns の可否など環境に依存して起動失敗を招きうるのに対し、
+そもそも一般ユーザー権限では `/usr` への書き込みも他ユーザーのホームの読み取りも
+できないため、上積みが小さい。
+
+この結果、API サービスの JSON 読み取り専用化（旧 `ReadOnlyPaths`）は権限では
+強制できなくなった。コード上は読むだけであり、書き込み経路を持たない。
 
 ## 6. セキュリティ上の判断
 
@@ -215,8 +256,11 @@ API サービスは JSON を読むだけなので `ReadOnlyPaths=/var/lib/home-n
   `127.0.0.1` に変更する。
 - **パスワードの置き場** — `EnvironmentFile` で collector にのみ渡す。リポジトリには
   `.env` / `clients.json` を含めない（`.gitignore` 済み）。
-- **`systemctl show` でのパスワード露出** — `EnvironmentFile` の内容は `systemctl show` で見えるため、
-  ラズパイに一般ユーザーを増やす場合は注意する。
+- **`systemctl --user show` でのパスワード露出** — `EnvironmentFile` の内容は展開後に見える。
+  ユーザーインスタンスなので他の一般ユーザーからは覗けないが、root からは見える。
+- **アプリを実行ユーザー自身が書き換えられる** — システムユニット時代は `/opt` を
+  root 所有にできたが、いまはサービスを動かすユーザー自身がコードを差し替えられる。
+  同じユーザーでログインできる者はどのみち任意のコードを実行できるので、実質的な差はない。
 
 ## 7. 検討したが採用しなかった案
 

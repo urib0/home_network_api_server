@@ -1,22 +1,20 @@
 [Unit]
 Description=収集済みクライアント一覧を返す API サーバー
 Documentation=https://github.com/uribo/home_network_api_server
-After=network-online.target
-Wants=network-online.target
+# ユーザーインスタンスには network-online.target が無いので順序付けはしない。
+# 0.0.0.0 への bind はネットワーク未接続でも成功するため、実害はない。
 
 [Service]
 Type=exec
-User=hnapi
-Group=hnapi
 
 # collector と同じ JSON を読む。ルーターの認証情報は不要
 StateDirectory=home-network-api-server
-Environment=CLIENTS_JSON_PATH=/var/lib/home-network-api-server/clients.json
+Environment=CLIENTS_JSON_PATH=%S/home-network-api-server/clients.json
 Environment=API_HOST=0.0.0.0
 Environment=API_PORT=8000
 
-WorkingDirectory=/opt/home-network-api-server
-ExecStart=/opt/home-network-api-server/.venv/bin/home-network-api
+WorkingDirectory=%h/home-network-api-server
+ExecStart=%h/home-network-api-server/.venv/bin/home-network-api
 
 Restart=on-failure
 RestartSec=5s
@@ -26,24 +24,17 @@ StandardError=journal
 SyslogIdentifier=home-network-api
 
 # --- 権限の絞り込み ---
+# collector 側と同じ理由で、mount namespace を使う指定は外してある。
+# JSON を読むだけなので本来は読み取り専用にしたいが、それには ReadOnlyPaths が要り、
+# これも mount namespace ベースなので見送っている (collector と同一ユーザーで動くため
+# 書き込み自体は可能な状態)。
 NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=true
 RestrictRealtime=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
-CapabilityBoundingSet=
-
-# JSON を読むだけなので書き込み権限は不要
-ReadOnlyPaths=/var/lib/home-network-api-server
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

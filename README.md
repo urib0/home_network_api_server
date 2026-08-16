@@ -56,7 +56,7 @@ GET /api/clients
 | `ROUTER_USERNAME` | `admin` | collector | 管理ユーザー名 |
 | `ROUTER_PASSWORD` | （必須） | collector | 管理パスワード。未設定なら終了コード 2 |
 | `ROUTER_TIMEOUT` | `10` | collector | HTTP タイムアウト秒 |
-| `CLIENTS_JSON_PATH` | `/var/lib/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス |
+| `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス（`$XDG_STATE_HOME` に従う） |
 | `API_HOST` | `0.0.0.0` | api | 待ち受けアドレス |
 | `API_PORT` | `8000` | api | 待ち受けポート |
 
@@ -83,44 +83,64 @@ uv run pytest
 
 ## ラズパイ（Debian 12）へのインストール
 
+systemd の**ユーザーインスタンス**に、自分のユーザー権限で登録する。`sudo` は使わない。
+
 ```bash
-# 1. uv を全ユーザーから使える場所へ入れる（未導入なら）
-curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
+# 1. uv を入れる（未導入なら）
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. リポジトリを配置する（場所は任意。ここでは /opt）
-sudo git clone <このリポジトリ> /opt/home-network-api-server
-cd /opt/home-network-api-server
+# 2. リポジトリを配置する（場所は任意。ホーム配下ならどこでもよい）
+git clone <このリポジトリ> ~/home-network-api-server
+cd ~/home-network-api-server
 
-# 3. インストール（ユーザー作成・依存同期・ユニット配置・有効化）
-sudo ./systemd/install.sh
+# 3. インストール（依存同期・ユニット配置・linger 有効化・起動）
+./systemd/install.sh
 
 # 4. パスワードを設定して定期取得を開始
-sudoedit /etc/home-network-api-server/router.env
-sudo systemctl start home-network-collector.service   # 初回取得
-sudo systemctl start home-network-collector.timer     # 定期取得
+${EDITOR:-nano} ~/.config/home-network-api-server/router.env
+systemctl --user start home-network-collector.service   # 初回取得
+systemctl --user start home-network-collector.timer     # 定期取得
 ```
 
 確認:
 
 ```bash
-systemctl list-timers home-network-collector.timer
-journalctl -u home-network-collector -u home-network-api -f
+systemctl --user list-timers home-network-collector.timer
+journalctl --user -u home-network-collector -u home-network-api -f
 curl -s http://localhost:8000/api/clients | jq
 ```
 
+| 何 | どこ |
+| --- | --- |
+| アプリ本体 | clone した場所（任意） |
+| ユニット | `~/.config/systemd/user/` |
+| 認証情報 | `~/.config/home-network-api-server/router.env`（`0600`） |
+| 収集結果 JSON | `~/.local/state/home-network-api-server/clients.json` |
+
 配置先は `install.sh` 自身の位置から決まるので、どこに clone しても動く。
-ユニットファイル内のパスは配置先に置換して `/etc/systemd/system/` へインストールされる。
-所有権は変更しないため、clone した本人が `sudo` 無しで `git pull` できる。
+ユニット内の `%h/home-network-api-server` が実際の配置先に置換される。
+所有権をいじらないので、そのまま `git pull` して `systemctl --user restart` すればよい。
 
-### Python 3.13 の置き場について
+### linger（ログアウトしても動かす）
 
-Debian 12 の標準 Python は 3.11 なので、uv が 3.13 をダウンロードする。
-既定の置き場（`~/.local/share/uv/python`）は `sudo` 実行だと `/root` 配下になり、
-`.venv/bin/python` がそこへの symlink になってしまう。サービスユーザー `hnapi` は
-`/root`（0700）を辿れず、`ProtectHome=true` でも遮断されるため起動に失敗する。
+systemd のユーザーインスタンスは既定でログアウト時に停止する。`install.sh` は
+`loginctl enable-linger` を試みるが、polkit に弾かれた場合は手動で:
 
-`install.sh` は `UV_PYTHON_INSTALL_DIR=/opt/uv-python` を設定してこれを避け、
-インストールの最後に `hnapi` で実際に import できるかを検証する。
-手動で `uv sync` する場合も同じ環境変数を指定すること。
+```bash
+sudo loginctl enable-linger $USER
+```
+
+これが唯一 `sudo` を要する箇所（環境によっては不要）。有効になっていれば
+ブート時に SSH ログイン無しでサービスが立ち上がる。
+
+### root で動かさないことの影響
+
+一般ユーザー権限で動かすため、`ProtectSystem` / `ProtectHome` / `PrivateTmp` /
+`ReadOnlyPaths` といった mount namespace ベースのハードニングは外してある
+（ユーザーインスタンスでは環境次第で起動失敗するリスクがあり、得られるものが小さい）。
+`NoNewPrivileges` や `RestrictAddressFamilies` など seccomp / prctl ベースのものは残している。
+
+副作用として、collector と api が同一ユーザーで動くので、API 側から JSON への
+書き込みを権限で禁じることはできない（コード上は読むだけ）。
 
 取得間隔は `systemd/home-network-collector.timer` の `OnUnitActiveSec` で調整する（既定 5 分）。

@@ -9,17 +9,26 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_CLIENTS_JSON_PATH = Path("/var/lib/home-network-api-server/clients.json")
-
-
 class ConfigError(RuntimeError):
     """必須の環境変数が無い、または値が不正。"""
+
+
+def default_clients_json_path() -> Path:
+    """CLIENTS_JSON_PATH 未設定時の保存先。
+
+    サービスはユーザー権限で動くので、システム全体の /var/lib ではなく
+    XDG の状態ディレクトリ（既定で ~/.local/state）配下に置く。
+    systemd ユニット側は StateDirectory= で同じ場所を明示している。
+    """
+    state_home = os.environ.get("XDG_STATE_HOME")
+    base = Path(state_home) if state_home else Path.home() / ".local" / "state"
+    return base / "home-network-api-server" / "clients.json"
 
 
 def clients_json_path() -> Path:
     """収集結果 JSON のパス。収集側と API 側で同じ値を見る。"""
     raw = os.environ.get("CLIENTS_JSON_PATH")
-    return Path(raw).expanduser() if raw else DEFAULT_CLIENTS_JSON_PATH
+    return Path(raw).expanduser() if raw else default_clients_json_path()
 
 
 @dataclass(frozen=True, slots=True)

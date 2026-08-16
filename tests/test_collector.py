@@ -125,6 +125,16 @@ def test_ROUTER_TIMEOUT_が不正ならConfigError(monkeypatch: pytest.MonkeyPat
         RouterConfig.from_env()
 
 
-def test_CLIENTS_JSON_PATH_未設定時の既定値(monkeypatch: pytest.MonkeyPatch):
+def test_CLIENTS_JSON_PATH_未設定時はXDG状態ディレクトリ配下(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("CLIENTS_JSON_PATH", raising=False)
-    assert clients_json_path() == Path("/var/lib/home-network-api-server/clients.json")
+    monkeypatch.setenv("XDG_STATE_HOME", "/xdg/state")
+    assert clients_json_path() == Path("/xdg/state/home-network-api-server/clients.json")
+
+
+def test_XDG_STATE_HOME_未設定なら_local_state_を使う(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("CLIENTS_JSON_PATH", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path("/home/pi")))
+    assert clients_json_path() == Path(
+        "/home/pi/.local/state/home-network-api-server/clients.json"
+    )

@@ -57,9 +57,11 @@
 ## フェーズ 6: ラズパイへのデプロイ（次にやること）
 
 - [ ] ラズパイに uv を導入
-- [ ] `/opt/home-network-api-server` へ配置し `install.sh` を実行
-- [ ] `/etc/home-network-api-server/router.env` にパスワードを設定
-- [ ] timer の発火を `systemctl list-timers` で確認
+- [ ] ホーム配下へ clone し `./systemd/install.sh` を実行（`sudo` 不要）
+- [ ] `~/.config/home-network-api-server/router.env` にパスワードを設定
+- [ ] `loginctl show-user $USER --property=Linger` が `yes` か確認
+- [ ] timer の発火を `systemctl --user list-timers` で確認
+- [ ] 一度再起動し、SSH ログイン無しでサービスが上がるか確認
 - [ ] LAN の別ホストから `curl http://<ラズパイ>:8000/api/clients` を確認
 - [ ] 一晩放置して journal にエラーが溜まっていないか確認
 

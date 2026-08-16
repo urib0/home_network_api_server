@@ -1,24 +1,22 @@
 [Unit]
 Description=Archer A10 のクライアント一覧を取得して JSON に保存する (ワンショット)
 Documentation=https://github.com/uribo/home_network_api_server
-# ネットワークが上がってから実行する
-After=network-online.target
-Wants=network-online.target
+# ユーザーインスタンスには network-online.target が無いので順序付けはしない。
+# 起動直後にネットワークが未接続でも、次の timer 発火 (5 分後) で回復する。
 
 [Service]
 Type=oneshot
-User=hnapi
-Group=hnapi
 
-# ルーターの IP / ユーザー名 / パスワードはこのファイルに置く (chmod 600, root:hnapi)
-EnvironmentFile=/etc/home-network-api-server/router.env
+# ルーターの IP / ユーザー名 / パスワードはこのファイルに置く (0600)
+# %E はユーザーインスタンスでは ~/.config に解決される
+EnvironmentFile=%E/home-network-api-server/router.env
 
-# /var/lib/home-network-api-server を systemd が作成・所有権設定する
+# %S はユーザーインスタンスでは ~/.local/state。ディレクトリは systemd が作る
 StateDirectory=home-network-api-server
-Environment=CLIENTS_JSON_PATH=/var/lib/home-network-api-server/clients.json
+Environment=CLIENTS_JSON_PATH=%S/home-network-api-server/clients.json
 
-WorkingDirectory=/opt/home-network-api-server
-ExecStart=/opt/home-network-api-server/.venv/bin/home-network-collector
+WorkingDirectory=%h/home-network-api-server
+ExecStart=%h/home-network-api-server/.venv/bin/home-network-collector
 
 # ルーターが応答しない場合に備えて上限を設ける (timer の間隔より短くする)
 TimeoutStartSec=60
@@ -29,21 +27,17 @@ StandardError=journal
 SyslogIdentifier=home-network-collector
 
 # --- 権限の絞り込み ---
+# 一般ユーザー権限で動くため、mount namespace を使う指定 (ProtectSystem / ProtectHome /
+# PrivateTmp など) は外してある。ユーザーインスタンスでは環境によって失敗し、
+# 起動しなくなるリスクのわりに得られるものが小さい。
+# 以下は seccomp / prctl ベースで、追加の準備なしに確実に効くものだけ。
 NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=true
 RestrictRealtime=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
-CapabilityBoundingSet=
 
-[Install]
-WantedBy=multi-user.target
+# timer から起動されるので [Install] は持たない。
+# 手動実行は systemctl --user start home-network-collector.service
