@@ -1,6 +1,7 @@
 # home-network-api-server
 
-自宅のルーター（Yamaha RTX810）の DHCP リースからクライアント一覧を定期的に取得し、
+自宅のルーター（Yamaha RTX810）の DHCP リースを母集団に、ARP と Archer A10 の
+接続端末情報を補ってクライアント一覧を定期的に取得し、
 LAN 内向けの REST API で返すための小さなツール群。
 
 - **collector** — RTX810 へ SSH でログインして `show status dhcp` を実行し、JSON へ上書き保存するワンショット処理（systemd timer で定期実行）
@@ -19,21 +20,24 @@ GET /api/clients
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "updated_at": "2026-08-24T01:40:00+09:00",
   "count": 2,
   "clients": {
     "00-A0-DE-11-22-33": {
       "ip": "192.168.100.2",
       "hostname": "nas",
-      "lease_expires": "2026-08-27T09:12:34+09:00"
+      "lease_expires": "2026-08-27T09:12:34+09:00",
+      "arp": {"present": true, "interface": "LAN1(port1)", "ttl_seconds": 928, "entry_type": "dynamic"},
+      "connection": {"medium": "wifi", "band": "5ghz", "ssid": "home", "signal": -48}
     },
     "AC-DE-48-00-11-22": {
       "ip": "192.168.100.4",
       "hostname": "iPhone",
       "lease_expires": "2026-08-26T23:59:59+09:00"
     }
-  }
+  },
+  "sources": {"dhcp": {"status": "ok"}, "arp": {"status": "ok"}, "archer": {"status": "ok"}}
 }
 ```
 
@@ -44,6 +48,10 @@ GET /api/clients
 
 `hostname` は端末が DHCP でホスト名を送ってこない場合 `null` になる（実測では 14 台中 3 台）。
 `lease_expires` はルーターが返す残りリース時間を `updated_at` に足した絶対時刻。
+`arp` は RTX810 が保持する ARP エントリ、`connection` は Archer A10 で現在見えている
+接続種別を表す。ARP は「最近の通信」、Archer は「現在の Wi-Fi / 有線接続」を示すため、
+どちらも在宅判定そのものではない。Archer の設定が無い、または取得に失敗した場合は
+`connection` が `null` となり、`sources.archer` に状態を記録する。
 
 認証は無し。LAN 内からのアクセスのみを想定しているため、ルーターのポート開放はしないこと。
 
@@ -106,6 +114,8 @@ ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 -oHostKeyAlgorithms=+ssh-rsa hna
 | `ROUTER_USERNAME` | （必須） | collector | `login user` で作ったユーザー名。未設定なら終了コード 2 |
 | `ROUTER_PASSWORD` | （必須） | collector | そのユーザーのパスワード。未設定なら終了コード 2 |
 | `ROUTER_TIMEOUT` | `10` | collector | 接続とコマンド応答のタイムアウト秒 |
+| `ARCHER_HOST` / `ARCHER_USERNAME` / `ARCHER_PASSWORD` | （任意） | collector | Archer A10 の管理画面。3 つすべてを設定すると Wi-Fi / 有線の接続種別を補う |
+| `ARCHER_TIMEOUT` | `10` | collector | Archer A10 の応答タイムアウト秒 |
 | `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス。未設定時のみ `$XDG_STATE_HOME` に従う（systemd ユニットは常に明示的に渡す） |
 | `API_HOST` | `0.0.0.0` | api | 待ち受けアドレス |
 | `API_PORT` | `8000` | api | 待ち受けポート |

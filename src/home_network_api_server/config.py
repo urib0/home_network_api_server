@@ -66,6 +66,40 @@ class RouterConfig:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ArcherConfig:
+    """Archer A10 の読み取り専用 API へ接続するための設定。"""
+
+    host: str
+    username: str
+    password: str
+    timeout: int
+
+    @classmethod
+    def from_env(cls) -> ArcherConfig | None:
+        """Archer の設定を読む。
+
+        Archer は接続種別を補う任意の情報源なので、3 つとも未設定なら使わない。
+        一部だけ設定された場合は、設定ミスを見逃さないためエラーにする。
+        """
+        values = {
+            "ARCHER_HOST": os.environ.get("ARCHER_HOST"),
+            "ARCHER_USERNAME": os.environ.get("ARCHER_USERNAME"),
+            "ARCHER_PASSWORD": os.environ.get("ARCHER_PASSWORD"),
+        }
+        if not any(values.values()):
+            return None
+        missing = [name for name, value in values.items() if not value]
+        if missing:
+            raise ConfigError(f"環境変数 {', '.join(missing)} が設定されていません")
+        return cls(
+            host=_normalize_url(values["ARCHER_HOST"]),
+            username=values["ARCHER_USERNAME"],
+            password=values["ARCHER_PASSWORD"],
+            timeout=_int_env("ARCHER_TIMEOUT", 10),
+        )
+
+
 def _normalize_host(raw: str) -> str:
     """ROUTER_HOST をホスト名 / IP だけにする。
 
@@ -76,6 +110,12 @@ def _normalize_host(raw: str) -> str:
     if "://" in host:
         host = host.split("://", 1)[1]
     return host.rstrip("/")
+
+
+def _normalize_url(raw: str | None) -> str:
+    assert raw is not None
+    host = raw.strip().rstrip("/")
+    return host if "://" in host else f"http://{host}"
 
 
 @dataclass(frozen=True, slots=True)

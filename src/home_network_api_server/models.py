@@ -50,6 +50,14 @@ _REMAINING_LABEL_RE = re.compile(r"remaining\s*lease|残り(?:時間|リース)"
 _DURATION_RE = re.compile(r"(\d+)\s*(day|hour|min|sec)", re.IGNORECASE)
 _UNIT_SECONDS = {"day": 86400, "hour": 3600, "min": 60, "sec": 1}
 
+# `show arp` の実機出力:
+# LAN1(port1)    10.10.10.2        b4:69:21:1f:7d:ea 1157
+_ARP_RE = re.compile(
+    rf"^(?P<interface>\S+)\s+(?P<ip>{_IPV4_RE.pattern})\s+"
+    rf"(?P<mac>{_MAC_PATTERN})\s+(?P<ttl>\d+|permanent)$",
+    re.IGNORECASE,
+)
+
 # ホスト名の末尾に付いてくる区切り文字
 _HOSTNAME_TRAILING = ",、)）\"'"
 
@@ -166,4 +174,36 @@ def parse_dhcp_status(text: str, now: datetime | None = None) -> dict[str, dict[
         if remaining is not None:
             current["lease_expires"] = (reference + remaining).isoformat(timespec="seconds")
 
+    return dict(sorted(clients.items()))
+
+
+def parse_arp_table(text: str) -> dict[str, dict[str, Any]]:
+    """`show arp` の出力を MAC をキーにした辞書へ変換する。"""
+    entries: dict[str, dict[str, Any]] = {}
+    for raw_line in text.splitlines():
+        match = _ARP_RE.match(raw_line.strip())
+        if not match:
+            continue
+        ttl = match.group("ttl").lower()
+        entries[normalize_mac(match.group("mac"))] = {
+            "interface": match.group("interface"),
+            "ttl_seconds": int(ttl) if ttl.isdigit() else None,
+            "entry_type": "static" if ttl == "permanent" else "dynamic",
+        }
+    return dict(sorted(entries.items()))
+
+
+def merge_client_sources(
+    dhcp_clients: dict[str, dict[str, Any]],
+    arp_entries: dict[str, dict[str, Any]],
+    archer_connections: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """DHCP を母集団として ARP と Archer の情報を付加する。"""
+    clients: dict[str, dict[str, Any]] = {}
+    for mac, client in dhcp_clients.items():
+        merged = dict(client)
+        arp = arp_entries.get(mac)
+        merged["arp"] = {"present": False} if arp is None else {"present": True, **arp}
+        merged["connection"] = archer_connections.get(mac)
+        clients[mac] = merged
     return dict(sorted(clients.items()))

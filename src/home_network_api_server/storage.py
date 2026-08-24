@@ -13,17 +13,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
-def build_snapshot(clients: dict[str, dict[str, Any]], updated_at: datetime) -> dict[str, Any]:
+def build_snapshot(
+    clients: dict[str, dict[str, Any]], updated_at: datetime, sources: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """JSON に書き出すトップレベルの構造を組み立てる。"""
-    return {
+    snapshot = {
         "schema_version": SCHEMA_VERSION,
         "updated_at": updated_at.isoformat(timespec="seconds"),
         "count": len(clients),
         "clients": clients,
     }
+    if sources is not None:
+        snapshot["sources"] = sources
+    return snapshot
 
 
 def write_snapshot(path: Path, snapshot: dict[str, Any]) -> None:

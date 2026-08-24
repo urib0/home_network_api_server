@@ -6,6 +6,7 @@ import pytest
 
 from home_network_api_server import collector
 from home_network_api_server.config import ConfigError, RouterConfig, clients_json_path
+from home_network_api_server.archer import ArcherError
 from home_network_api_server.rtx import RtxAuthError, RtxError
 from home_network_api_server.storage import read_snapshot
 
@@ -53,12 +54,18 @@ def test_collect_once_がJSONを書く(tmp_path: Path, monkeypatch: pytest.Monke
     assert collector.collect_once(config, path) == 3
 
     snapshot = read_snapshot(path)
-    assert snapshot["schema_version"] == 2
+    assert snapshot["schema_version"] == 3
     assert snapshot["count"] == 3
     assert snapshot["clients"]["00-A0-DE-11-22-33"]["hostname"] == "nas"
     # 残り時間の基準は updated_at と同じ時刻を使う
     assert snapshot["clients"]["00-A0-DE-11-22-33"]["lease_expires"] > snapshot["updated_at"]
-    assert session.calls == ["connect", collector.DHCP_STATUS_COMMAND, "close"]
+    assert session.calls == [
+        "connect",
+        collector.DHCP_STATUS_COMMAND,
+        collector.ARP_COMMAND,
+        "close",
+    ]
+    assert snapshot["sources"]["archer"] == {"status": "unavailable", "reason": "not_configured"}
 
 
 def test_取得に失敗してもログアウトする(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: RouterConfig):
@@ -93,6 +100,27 @@ def test_リースが0件でも書き込むが警告する(
     assert collector.collect_once(config, path) == 0
     assert read_snapshot(path)["count"] == 0
     assert "--raw" in caplog.text
+
+
+def test_Archerの取得に失敗してもDHCPとARPを保存する(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: RouterConfig
+):
+    _patch_session(monkeypatch, FakeSession(DHCP_STATUS))
+    monkeypatch.setenv("ARCHER_HOST", "http://10.10.10.5")
+    monkeypatch.setenv("ARCHER_USERNAME", "admin")
+    monkeypatch.setenv("ARCHER_PASSWORD", "secret")
+    monkeypatch.setattr(
+        collector,
+        "fetch_connections",
+        lambda _: (_ for _ in ()).throw(ArcherError("timeout")),
+    )
+
+    path = tmp_path / "clients.json"
+    collector.collect_once(config, path)
+
+    snapshot = read_snapshot(path)
+    assert snapshot["count"] == 3
+    assert snapshot["sources"]["archer"] == {"status": "error", "message": "timeout"}
 
 
 @pytest.fixture
@@ -143,7 +171,9 @@ def test_main_rawはJSONを書かずに出力を表示する(
     _patch_session(env, FakeSession(DHCP_STATUS))
 
     assert collector.main(["--raw"]) == 0
-    assert "192.168.100.2" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "192.168.100.2" in output
+    assert collector.ARP_COMMAND in output
     assert not path.exists()
 
 
@@ -161,6 +191,24 @@ def test_ROUTER_HOST_の既定値(env: pytest.MonkeyPatch):
 def test_ROUTER_SSH_PORT_を変えられる(env: pytest.MonkeyPatch):
     env.setenv("ROUTER_SSH_PORT", "2222")
     assert RouterConfig.from_env().port == 2222
+
+
+def test_Archerの設定は3つとも未設定なら任意(monkeypatch: pytest.MonkeyPatch):
+    from home_network_api_server.config import ArcherConfig
+
+    for name in ("ARCHER_HOST", "ARCHER_USERNAME", "ARCHER_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    assert ArcherConfig.from_env() is None
+
+
+def test_Archerの設定が一部だけならConfigError(monkeypatch: pytest.MonkeyPatch):
+    from home_network_api_server.config import ArcherConfig
+
+    monkeypatch.setenv("ARCHER_HOST", "10.10.10.5")
+    monkeypatch.delenv("ARCHER_USERNAME", raising=False)
+    monkeypatch.delenv("ARCHER_PASSWORD", raising=False)
+    with pytest.raises(ConfigError):
+        ArcherConfig.from_env()
 
 
 def test_ROUTER_TIMEOUT_が不正ならConfigError(env: pytest.MonkeyPatch):

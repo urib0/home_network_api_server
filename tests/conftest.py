@@ -38,3 +38,10 @@ DHCP Scope number: 1
   2:      192.168.100.3:  00:a0:de:44:55:66, raspberrypi
   3:      192.168.100.4:  ac:de:48:00:11:22
 """
+
+ARP_TABLE = """\
+Count: 2
+Interface      IP address        MAC address       TTL(second)
+LAN1(port1)    192.168.100.2    00:a0:de:11:22:33 1157
+LAN1(port1)    192.168.100.3    00:a0:de:44:55:66 permanent
+"""

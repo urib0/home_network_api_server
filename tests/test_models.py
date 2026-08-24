@@ -9,12 +9,14 @@ import pytest
 from home_network_api_server.models import (
     find_mac,
     normalize_mac,
+    merge_client_sources,
+    parse_arp_table,
     parse_dhcp_status,
     parse_hostname,
     parse_remaining_lease,
 )
 
-from .conftest import DHCP_STATUS, DHCP_SUMMARY
+from .conftest import ARP_TABLE, DHCP_STATUS, DHCP_SUMMARY
 
 JST = timezone(timedelta(hours=9))
 NOW = datetime(2026, 8, 24, 14, 0, 0, tzinfo=JST)
@@ -135,3 +137,31 @@ def test_parse_dhcp_status_はnow省略時に現在時刻を使う():
 
 def test_parse_dhcp_status_空でも壊れない():
     assert parse_dhcp_status("", NOW) == {}
+
+
+def test_parse_arp_table():
+    entries = parse_arp_table(ARP_TABLE)
+    assert entries["00-A0-DE-11-22-33"] == {
+        "interface": "LAN1(port1)",
+        "ttl_seconds": 1157,
+        "entry_type": "dynamic",
+    }
+    assert entries["00-A0-DE-44-55-66"]["entry_type"] == "static"
+    assert entries["00-A0-DE-44-55-66"]["ttl_seconds"] is None
+
+
+def test_merge_client_sources_はDHCPを母集団にする():
+    clients = merge_client_sources(
+        {"00-A0-DE-11-22-33": {"ip": "192.168.100.2"}},
+        {"00-A0-DE-11-22-33": {"ttl_seconds": 10}},
+        {
+            "00-A0-DE-11-22-33": {"medium": "wifi", "band": "5ghz"},
+            "AA-BB-CC-DD-EE-FF": {"medium": "wired"},
+        },
+    )
+    assert list(clients) == ["00-A0-DE-11-22-33"]
+    assert clients["00-A0-DE-11-22-33"]["arp"] == {"present": True, "ttl_seconds": 10}
+    assert clients["00-A0-DE-11-22-33"]["connection"] == {
+        "medium": "wifi",
+        "band": "5ghz",
+    }

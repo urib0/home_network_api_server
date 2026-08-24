@@ -12,8 +12,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .config import ConfigError, RouterConfig, clients_json_path
-from .models import parse_dhcp_status
+from .archer import ArcherError, fetch_connections
+from .config import ArcherConfig, ConfigError, RouterConfig, clients_json_path
+from .models import merge_client_sources, parse_arp_table, parse_dhcp_status
 from .rtx import RtxAuthError, RtxError, RtxSession
 from .storage import build_snapshot, write_snapshot
 
@@ -22,21 +23,22 @@ logger = logging.getLogger("home_network_api_server.collector")
 # 一般ユーザーモードで実行できる読み取り専用コマンド。
 # `show status dhcp summary` は 1 行 1 リースで短いが、リースの残り時間を出さない。
 DHCP_STATUS_COMMAND = "show status dhcp"
+ARP_COMMAND = "show arp"
 
 
-def fetch_raw(config: RouterConfig) -> str:
-    """RTX810 へログインし、DHCP リース一覧の生の出力を返す。"""
+def fetch_rtx_raw(config: RouterConfig) -> tuple[str, str]:
+    """RTX810 へ 1 回だけログインし、DHCP と ARP の生出力を返す。"""
     with RtxSession(config) as session:
-        return session.run(DHCP_STATUS_COMMAND)
+        return session.run(DHCP_STATUS_COMMAND), session.run(ARP_COMMAND)
 
 
-def fetch_clients(config: RouterConfig, now: datetime) -> dict[str, dict]:
-    """RTX810 から取得したクライアント一覧を返す。
+def _parse_dhcp_clients(raw: str, now: datetime) -> dict[str, dict]:
+    """DHCP 出力をクライアント一覧へ変換して、0 件なら警告する。
 
     `now` はリースの残り時間を絶対時刻に直す基準。スナップショットの `updated_at`
     と同じ値を渡し、両者がずれないようにする。
     """
-    clients = parse_dhcp_status(fetch_raw(config), now)
+    clients = parse_dhcp_status(raw, now)
     if not clients:
         # リース期限は既定 72 時間あるので、本当に 0 件になることはまず無い。
         # 出力形式が想定と違う可能性のほうが高いので、確認方法を添えて警告する。
@@ -53,8 +55,31 @@ def fetch_clients(config: RouterConfig, now: datetime) -> dict[str, dict]:
 def collect_once(config: RouterConfig, output_path: Path) -> int:
     """1 回分の取得と保存。書き込んだクライアント数を返す。"""
     now = datetime.now().astimezone()
-    clients = fetch_clients(config, now)
-    snapshot = build_snapshot(clients, now)
+    dhcp_raw, arp_raw = fetch_rtx_raw(config)
+    dhcp_clients = _parse_dhcp_clients(dhcp_raw, now)
+    arp_entries = parse_arp_table(arp_raw)
+
+    sources: dict[str, dict[str, str]] = {
+        "dhcp": {"status": "ok", "fetched_at": now.isoformat(timespec="seconds")},
+        "arp": {"status": "ok", "fetched_at": now.isoformat(timespec="seconds")},
+    }
+    archer_connections: dict[str, dict] = {}
+    archer_config = ArcherConfig.from_env()
+    if archer_config is None:
+        sources["archer"] = {"status": "unavailable", "reason": "not_configured"}
+    else:
+        try:
+            archer_connections = fetch_connections(archer_config)
+            sources["archer"] = {
+                "status": "ok",
+                "fetched_at": now.isoformat(timespec="seconds"),
+            }
+        except ArcherError as exc:
+            logger.warning("Archer の端末情報を取得できませんでした: %s", exc)
+            sources["archer"] = {"status": "error", "message": str(exc)}
+
+    clients = merge_client_sources(dhcp_clients, arp_entries, archer_connections)
+    snapshot = build_snapshot(clients, now, sources)
     write_snapshot(output_path, snapshot)
     logger.info("%s に %s 件を書き込みました", output_path, len(clients))
     return len(clients)
@@ -68,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--raw",
         action="store_true",
-        help=f"JSON に保存せず、`{DHCP_STATUS_COMMAND}` の出力をそのまま表示する",
+        help=f"JSON に保存せず、`{DHCP_STATUS_COMMAND}` と `{ARP_COMMAND}` の出力を表示する",
     )
     args = parser.parse_args(argv)
 
@@ -89,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.raw:
-            print(fetch_raw(config))
+            dhcp_raw, arp_raw = fetch_rtx_raw(config)
+            print(f"# {DHCP_STATUS_COMMAND}\n{dhcp_raw}\n\n# {ARP_COMMAND}\n{arp_raw}")
         else:
             collect_once(config, output_path)
     except RtxAuthError as exc:

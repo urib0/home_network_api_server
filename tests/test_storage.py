@@ -23,7 +23,7 @@ def _snapshot() -> dict:
 
 def test_build_snapshot_のトップレベル構造(tmp_path: Path):
     snapshot = _snapshot()
-    assert snapshot["schema_version"] == 2
+    assert snapshot["schema_version"] == 3
     assert snapshot["count"] == 1
     assert snapshot["updated_at"].startswith("2026-08-12T01:40:00")
     assert "00-A0-DE-11-22-33" in snapshot["clients"]

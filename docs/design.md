@@ -7,7 +7,7 @@ HTTP で取れるようにする。
 
 スコープ内:
 
-- Yamaha RTX810 の DHCP リースからクライアント一覧を取得
+- RTX810 の DHCP リースをクライアント母集団として取得し、ARP と Archer A10 の情報で補う
 - MAC アドレスをキーにした JSON への上書き保存
 - その JSON を返す読み取り専用 API
 
@@ -25,7 +25,7 @@ HTTP で取れるようにする。
                  │ RTX810 (192.168.100.1)    │
                  └────────────┬──────────────┘
                               │ SSH (paramiko) で対話シェルを開き
-                              │ show status dhcp を実行 / 5 分ごと
+                              │ show status dhcp / show arp を実行 / 5 分ごと
         ┌─────────────────────▼──────────────────────┐
         │  home-network-collector.service (oneshot)  │
         │  ← home-network-collector.timer が起動      │
@@ -67,8 +67,9 @@ RTX810 から「LAN に居る端末」を知る方法は主に 2 つあり、意
 | 取れる情報 | IP / MAC / インターフェース | IP / MAC / **ホスト名** / リースの残り時間 |
 | 差集合 | 固定 IP の端末はここにしか出ない | 電源を切った端末もここには残り続ける |
 
-**採用したのは DHCP リースのみ**。すべての端末を `dhcp scope bind` で MAC 固定する
-運用を前提にしているため、DHCP リースが端末一覧そのものになる。
+**端末の母集団は DHCP リース**。すべての端末を `dhcp scope bind` で MAC 固定する
+運用を前提にしているため、DHCP リースをキーとし、ARP と Archer A10 の端末情報を
+MAC で付加する。Archer にだけ現れる RTX810 自身は DHCP に無いため API には含めない。
 
 代償として、この JSON は**「いま通信しているか」を表さない**。電源を切った端末も
 リース期限（既定 72 時間）までは残る。
@@ -163,14 +164,16 @@ MAC が JSON のキーなので、MAC の無いレコードは存在できない
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "updated_at": "2026-08-24T01:40:00+09:00",
   "count": 13,
   "clients": {
     "<MAC>": {
       "ip": "192.168.100.2",
       "hostname": "nas" | null,
-      "lease_expires": "2026-08-27T09:12:34+09:00" | null
+      "lease_expires": "2026-08-27T09:12:34+09:00" | null,
+      "arp": {"present": true, "interface": "LAN1(port1)", "ttl_seconds": 928, "entry_type": "dynamic"},
+      "connection": {"medium": "wifi" | "wired", "band": "2.4ghz" | "5ghz"} | null
     }
   }
 }
@@ -181,9 +184,8 @@ MAC が JSON のキーなので、MAC の無いレコードは存在できない
 - **`clients` でラップする** — トップレベルを MAC の辞書にすると `updated_at` のような
   メタ情報を足す場所が無くなる（MAC と衝突しない保証もない）。1 段ラップすることで、
   クライアント側が「収集が止まっていないか」を判断できる。
-- **`schema_version: 2`** — Archer A10 時代の v1 は `type` / `band` / `guest` を持っていたが、
-  RTX810 は有線ルーターで DHCP しか見ないので、3 つとも常に同じ値にしかならない。
-  意味を持たないフィールドを残すより、上げて落とすほうが読み手に正直。
+- **`schema_version: 3`** — DHCP の情報に ARP と Archer A10 の接続種別を加える。
+  `arp` と `connection` は意味が異なるため統合した `active` フラグにはしない。
 - **`updated_at` はローカルタイムゾーン付き ISO 8601** — ラズパイの JST がそのまま出る。
   オフセット付きなので曖昧さは無い。
 - **`lease_expires` は計算値** — ルーターは絶対時刻ではなく残り時間
@@ -195,7 +197,8 @@ MAC が JSON のキーなので、MAC の無いレコードは存在できない
   引きずられないようにする。キーは昇順ソートし、`git diff` や目視での比較をしやすくする。
 - **`hostname` が取れなければ `null`** — 固定 IP を端末側で設定している場合や、
   ホスト名を送ってこない端末がこれに当たる。
-- **履歴は持たない** — 毎回全上書き。
+- **履歴は持たない** — 毎回全上書き。中間ファイルは保存せず、collector の 1 実行で
+  DHCP / ARP / Archer を取得、マージしてから原子的に保存する。
 
 ### 3.4 書き込みの原子性
 
