@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>端末名データベース</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 920px; margin: 0 auto; padding: 24px; background: Canvas; color: CanvasText; }
+      header { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+      h1 { margin: 0; font-size: 1.5rem; }
+      a { color: LinkText; } button, input { font: inherit; padding: 7px 9px; border: 1px solid color-mix(in srgb, CanvasText 30%, transparent); border-radius: 6px; background: Canvas; color: CanvasText; }
+      button { cursor: pointer; } button.danger { color: #c22; }
+      #add-device { display: flex; gap: 8px; flex-wrap: wrap; margin: 20px 0; }
+      #add-device input { flex: 1 1 220px; } #status { color: GrayText; }
+      table { width: 100%; border-collapse: collapse; } th, td { padding: 9px 7px; text-align: left; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+      th { color: GrayText; font-size: .8rem; } td input { width: 100%; box-sizing: border-box; }
+      .actions { white-space: nowrap; } @media (max-width: 620px) { body { padding: 16px; } table { font-size: .9rem; } th, td { padding: 7px 4px; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>端末名データベース</h1>
+      <a href="/">端末一覧へ戻る</a>
+    </header>
+    <p id="status">読み込み中…</p>
+    <form id="add-device">
+      <input name="mac" aria-label="MACアドレス" placeholder="MACアドレス（例: AA:BB:CC:DD:EE:FF）" required>
+      <input name="name" aria-label="端末名" placeholder="端末名" required>
+      <button type="submit">追加</button>
+    </form>
+    <table>
+      <thead><tr><th>MAC アドレス</th><th>端末名</th><th></th></tr></thead>
+      <tbody id="devices"></tbody>
+    </table>
+    <script>
+      const status = document.querySelector('#status');
+      const devices = document.querySelector('#devices');
+      const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+
+      async function api(url, options) {
+        const response = await fetch(url, options);
+        if (response.ok) return response.status === 204 ? null : response.json();
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${response.status}`);
+      }
+
+      function render(items) {
+        devices.innerHTML = items.map(item => `<tr data-mac="${escapeHtml(item.mac)}">
+          <td><input name="mac" value="${escapeHtml(item.mac)}" required></td>
+          <td><input name="name" value="${escapeHtml(item.name)}" required maxlength="100"></td>
+          <td class="actions"><button type="button" data-save>保存</button> <button class="danger" type="button" data-delete="${escapeHtml(item.mac)}">削除</button></td>
+        </tr>`).join('');
+      }
+
+      async function load() {
+        status.textContent = '読み込み中…';
+        try {
+          const items = await api('/api/devices');
+          render(items);
+          status.textContent = `${items.length} 件の登録`;
+        } catch (error) {
+          status.textContent = `読み込めませんでした: ${error.message}`;
+        }
+      }
+
+      document.querySelector('#add-device').addEventListener('submit', async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        try {
+          await api('/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+          form.reset();
+          await load();
+        } catch (error) { status.textContent = `追加できませんでした: ${error.message}`; }
+      });
+
+      devices.addEventListener('click', async event => {
+        const save = event.target.closest('[data-save]');
+        const button = event.target.closest('[data-delete]');
+        if (save) {
+          const row = save.closest('tr');
+          const body = {
+            mac: row.querySelector('[name="mac"]').value,
+            name: row.querySelector('[name="name"]').value,
+          };
+          try {
+            await api(`/api/devices/${encodeURIComponent(row.dataset.mac)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            await load();
+          } catch (error) { status.textContent = `保存できませんでした: ${error.message}`; }
+          return;
+        }
+        if (!button || !window.confirm(`${button.dataset.delete} を削除しますか？`)) return;
+        try {
+          await api(`/api/devices/${encodeURIComponent(button.dataset.delete)}`, { method: 'DELETE' });
+          await load();
+        } catch (error) { status.textContent = `削除できませんでした: ${error.message}`; }
+      });
+      load();
+    </script>
+  </body>
+</html>

@@ -22,6 +22,12 @@ GET /
 スナップショットを取得する。
 
 ```
+GET /devices
+```
+
+SQLiteへ登録した端末名を管理する画面。MACアドレスと端末名の追加・変更・削除ができる。
+
+```
 GET /api/clients
 ```
 
@@ -38,6 +44,10 @@ Content-Type: application/json
 
 端末名を保存するエンドポイント。`name` に空文字を渡すと登録を削除し、DHCPホスト名の
 表示へ戻す。通常は閲覧画面で端末名をクリックして編集する。
+
+`GET /api/devices` はDBの全登録を返す。`POST /api/devices` は `mac` と `name` を追加し、
+`PUT /api/devices/{mac}` は本文の `mac` と `name` で変更、`DELETE /api/devices/{mac}` は
+登録を削除する。通常は `/devices` を使う。
 
 ```json
 {

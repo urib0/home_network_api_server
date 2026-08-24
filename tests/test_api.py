@@ -66,6 +66,13 @@ def test_トップページは閲覧画面を返す(client: TestClient):
     assert "ネットワークの端末一覧" in response.text
 
 
+def test_端末名管理ページを返す(client: TestClient):
+    response = client.get("/devices")
+
+    assert response.status_code == 200
+    assert "端末名データベース" in response.text
+
+
 def test_登録済みの表示名をクライアント一覧へ重ねる(client: TestClient, tmp_path: Path):
     mac = "00-A0-DE-11-22-33"
     write_snapshot(tmp_path / "clients.json", build_snapshot({mac: {}}, datetime.now().astimezone()))
@@ -93,3 +100,26 @@ def test_端末名のMACが不正なら422(client: TestClient):
     response = client.put("/api/devices/not-a-mac", json={"name": "NAS"})
 
     assert response.status_code == 422
+
+
+def test_端末名データベースを追加変更削除できる(client: TestClient):
+    mac = "00-A0-DE-11-22-33"
+
+    created = client.post("/api/devices", json={"mac": "00:a0:de:11:22:33", "name": "NAS"})
+    listed = client.get("/api/devices")
+    changed = client.put(f"/api/devices/{mac}", json={"mac": "AA-BB-CC-DD-EE-FF", "name": "NAS 2"})
+    deleted = client.delete("/api/devices/AA:BB:CC:DD:EE:FF")
+
+    assert created.status_code == 201
+    assert listed.json() == [{"mac": mac, "name": "NAS"}]
+    assert changed.json() == {"mac": "AA-BB-CC-DD-EE-FF", "name": "NAS 2"}
+    assert deleted.status_code == 204
+    assert client.get("/api/devices").json() == []
+
+
+def test_端末名のMAC重複は409(client: TestClient):
+    client.post("/api/devices", json={"mac": "00-A0-DE-11-22-33", "name": "NAS"})
+
+    response = client.post("/api/devices", json={"mac": "00:a0:de:11:22:33", "name": "別名"})
+
+    assert response.status_code == 409
