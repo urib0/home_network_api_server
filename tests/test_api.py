@@ -13,6 +13,7 @@ from home_network_api_server.storage import build_snapshot, write_snapshot
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("CLIENTS_JSON_PATH", str(tmp_path / "clients.json"))
+    monkeypatch.setenv("DEVICE_NAMES_DB_PATH", str(tmp_path / "device_names.sqlite3"))
     return TestClient(app)
 
 
@@ -63,3 +64,32 @@ def test_トップページは閲覧画面を返す(client: TestClient):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "ネットワークの端末一覧" in response.text
+
+
+def test_登録済みの表示名をクライアント一覧へ重ねる(client: TestClient, tmp_path: Path):
+    mac = "00-A0-DE-11-22-33"
+    write_snapshot(tmp_path / "clients.json", build_snapshot({mac: {}}, datetime.now().astimezone()))
+    client.put(f"/api/devices/{mac}", json={"name": "NAS"})
+
+    response = client.get("/api/clients")
+
+    assert response.status_code == 200
+    assert response.json()["clients"][mac]["name"] == "NAS"
+
+
+def test_端末名を保存して空文字で削除できる(client: TestClient):
+    mac = "00-A0-DE-11-22-33"
+
+    saved = client.put("/api/devices/00:a0:de:11:22:33", json={"name": "  NAS  "})
+    deleted = client.put(f"/api/devices/{mac}", json={"name": ""})
+
+    assert saved.status_code == 200
+    assert saved.json() == {"mac": mac, "name": "NAS"}
+    assert deleted.status_code == 200
+    assert deleted.json() == {"mac": mac, "name": None}
+
+
+def test_端末名のMACが不正なら422(client: TestClient):
+    response = client.put("/api/devices/not-a-mac", json={"name": "NAS"})
+
+    assert response.status_code == 422

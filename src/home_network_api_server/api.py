@@ -13,8 +13,11 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, field_validator
 
-from .config import ApiConfig, clients_json_path
+from .config import ApiConfig, clients_json_path, device_names_db_path
+from .device_names import get_device_names, set_device_name
+from .models import normalize_mac
 from .storage import read_snapshot
 
 logger = logging.getLogger("home_network_api_server.api")
@@ -26,6 +29,19 @@ app = FastAPI(
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class DeviceNameUpdate(BaseModel):
+    """端末表示名の更新リクエスト。空文字は登録を削除する。"""
+
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if len(value.strip()) > 100:
+            raise ValueError("端末名は100文字以内にしてください")
+        return value
 
 
 @app.get("/", include_in_schema=False)
@@ -42,7 +58,12 @@ def get_clients() -> dict[str, Any]:
     """
     path: Path = clients_json_path()
     try:
-        return read_snapshot(path)
+        snapshot = read_snapshot(path)
+        names = get_device_names(device_names_db_path(), list(snapshot["clients"]))
+        snapshot["clients"] = {
+            mac: {**client, "name": names.get(mac)} for mac, client in snapshot["clients"].items()
+        }
+        return snapshot
     except FileNotFoundError:
         logger.warning("%s がまだ存在しません", path)
         raise HTTPException(
@@ -55,6 +76,17 @@ def get_clients() -> dict[str, Any]:
             status_code=503,
             detail="クライアント情報の読み込みに失敗しました",
         ) from None
+
+
+@app.put("/api/devices/{mac}")
+def update_device_name(mac: str, update: DeviceNameUpdate) -> dict[str, str | None]:
+    """MAC アドレスに紐づく、人が付ける表示名を保存する。"""
+    try:
+        normalized_mac = normalize_mac(mac)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    name = set_device_name(device_names_db_path(), normalized_mac, update.name)
+    return {"mac": normalized_mac, "name": name}
 
 
 def main() -> None:

@@ -25,6 +25,20 @@ GET /
 GET /api/clients
 ```
 
+端末名は `name` に入る。これはMACアドレスに紐づけてSQLiteへ保存する、人が付けた
+表示名であり、未登録時は `null` になる。閲覧画面では未登録の端末を
+`host: <DHCPホスト名>` として表示する。
+
+```
+PUT /api/devices/{mac}
+Content-Type: application/json
+
+{"name": "リビングのNAS"}
+```
+
+端末名を保存するエンドポイント。`name` に空文字を渡すと登録を削除し、DHCPホスト名の
+表示へ戻す。通常は閲覧画面で端末名をクリックして編集する。
+
 ```json
 {
   "schema_version": 3,
@@ -124,6 +138,7 @@ ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 -oHostKeyAlgorithms=+ssh-rsa hna
 | `ARCHER_HOST` / `ARCHER_USERNAME` / `ARCHER_PASSWORD` | （任意） | collector | Archer A10 の管理画面。3 つすべてを設定すると Wi-Fi / 有線の接続種別を補う |
 | `ARCHER_TIMEOUT` | `10` | collector | Archer A10 の応答タイムアウト秒 |
 | `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス。未設定時のみ `$XDG_STATE_HOME` に従う。systemd では `~/.config/home-network-api-server/paths.env` に設定する |
+| `DEVICE_NAMES_DB_PATH` | `clients.json` と同じディレクトリの `device_names.sqlite3` | api | MAC アドレスと人が付ける端末名を保存する SQLite ファイル。systemd では `paths.env` に設定する |
 | `API_HOST` | `0.0.0.0` | api | 待ち受けアドレス |
 | `API_PORT` | `8000` | api | 待ち受けポート |
 

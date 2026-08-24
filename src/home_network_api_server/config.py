@@ -1,6 +1,6 @@
 """環境変数から設定を読む。
 
-収集側と API 側で JSON のパスだけを共有するため、パス解決はここに集約する。
+収集側と API 側で共有する永続データのパス解決をここに集約する。
 """
 
 from __future__ import annotations
@@ -19,10 +19,7 @@ def default_clients_json_path() -> Path:
     サービスはユーザー権限で動くので、システム全体の /var/lib ではなく
     XDG の状態ディレクトリ（既定で ~/.local/state）配下に置く。
 
-    なお systemd ユニットは CLIENTS_JSON_PATH を明示的に渡すため、この既定値は
-    使われない。ユニット側は %h/.local/state/... と直に書いており
-    XDG_STATE_HOME を見ない（systemd の %S がバージョンで解決先を変えるのを
-    避けるため）ので、XDG_STATE_HOME を変えている環境では両者がずれる。
+    systemd では API / collector 共通の paths.env で明示的に渡す。
     """
     state_home = os.environ.get("XDG_STATE_HOME")
     base = Path(state_home) if state_home else Path.home() / ".local" / "state"
@@ -33,6 +30,12 @@ def clients_json_path() -> Path:
     """収集結果 JSON のパス。収集側と API 側で同じ値を見る。"""
     raw = os.environ.get("CLIENTS_JSON_PATH")
     return Path(raw).expanduser() if raw else default_clients_json_path()
+
+
+def device_names_db_path() -> Path:
+    """端末の表示名を保存する SQLite ファイルのパス。"""
+    raw = os.environ.get("DEVICE_NAMES_DB_PATH")
+    return Path(raw).expanduser() if raw else clients_json_path().with_name("device_names.sqlite3")
 
 
 @dataclass(frozen=True, slots=True)

@@ -79,8 +79,16 @@ fi
 # パスはユーザーごとに異なるため、雛形をそのままコピーせずここで展開する。
 if [[ ! -f $CONF_DIR/paths.env ]]; then
     echo "==> $CONF_DIR/paths.env を作成 (API と collector の共通保存先)"
-    sed "s|__CLIENTS_JSON_PATH__|$STATE_DIR/clients.json|" \
+    sed -e "s|__CLIENTS_JSON_PATH__|$STATE_DIR/clients.json|" \
+        -e "s|__DEVICE_NAMES_DB_PATH__|$STATE_DIR/device_names.sqlite3|" \
         "$APP_DIR/systemd/paths.env.example" > "$CONF_DIR/paths.env"
+    chmod 0600 "$CONF_DIR/paths.env"
+fi
+
+# 既存インストールでは paths.env が clients.json だけの構成なので、DB の保存先を
+# 追記してアップグレードする。利用者が明示的に設定済みなら変更しない。
+if ! grep -q '^DEVICE_NAMES_DB_PATH=' "$CONF_DIR/paths.env"; then
+    echo "DEVICE_NAMES_DB_PATH=$STATE_DIR/device_names.sqlite3" >> "$CONF_DIR/paths.env"
     chmod 0600 "$CONF_DIR/paths.env"
 fi
 

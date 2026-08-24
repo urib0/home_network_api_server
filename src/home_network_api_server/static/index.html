@@ -19,6 +19,8 @@
       th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); white-space: nowrap; }
       th { color: GrayText; font-size: .8rem; }
       .connection, .arp { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: .8rem; }
+      .name-button { padding: 0; border: 0; background: transparent; color: CanvasText; text-align: left; }
+      .name-button:hover { text-decoration: underline; }
       .wifi-2-4ghz { background: #1769aa; color: white; } .wifi-5ghz { background: #7048b8; color: white; }
       .wired { background: #0c7c59; color: white; }
       .unknown { background: #777; color: white; } .offline { color: GrayText; }
@@ -70,15 +72,16 @@
       const arp = item => item.arp?.present
         ? `<span class="arp">あり (${escapeHtml(item.arp.ttl_seconds)}秒)</span>`
         : '<span class="offline">なし</span>';
+      const deviceName = item => item.name || (item.hostname ? `host: ${item.hostname}` : null);
 
       function render() {
         if (!snapshot) return;
         const query = search.value.trim().toLocaleLowerCase();
         const rows = Object.entries(snapshot.clients)
-          .filter(([mac, item]) => [mac, item.hostname, item.ip].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+          .filter(([mac, item]) => [mac, deviceName(item), item.ip].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
           .sort(compareIpAddress);
         clients.innerHTML = rows.map(([mac, item]) => `<tr>
-          <td>${escapeHtml(item.ip)}</td><td>${escapeHtml(item.hostname)}</td><td>${connection(item)}</td>
+          <td>${escapeHtml(item.ip)}</td><td><button class="name-button" type="button" data-edit-name="${escapeHtml(mac)}" title="端末名を編集">${escapeHtml(deviceName(item))}</button></td><td>${connection(item)}</td>
           <td>${arp(item)}</td><td><code>${escapeHtml(macAddress(mac))}</code></td></tr>`).join('');
         summary.textContent = `${rows.length} / ${snapshot.count} 台を表示`;
       }
@@ -99,6 +102,25 @@
         }
       }
       search.addEventListener('input', render);
+      clients.addEventListener('click', async event => {
+        const button = event.target.closest('[data-edit-name]');
+        if (!button || !snapshot) return;
+        const mac = button.dataset.editName;
+        const item = snapshot.clients[mac];
+        const name = window.prompt(`${macAddress(mac)} の表示名`, item.name || '');
+        if (name === null) return;
+        try {
+          const response = await fetch(`/api/devices/${encodeURIComponent(mac)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
+          await load();
+        } catch (error) {
+          status.textContent = `端末名を保存できませんでした: ${error.message}`;
+        }
+      });
       document.querySelector('#reload').addEventListener('click', load);
       load();
     </script>
