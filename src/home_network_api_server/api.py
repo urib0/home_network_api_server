@@ -1,6 +1,6 @@
-"""クライアント一覧 JSON を返すだけの API サーバー。
+"""クライアント一覧 JSON と閲覧画面を提供する API サーバー。
 
-エンドポイントは GET /api/clients の 1 つのみ、認証なし（LAN 内前提）。
+閲覧画面は GET /、JSON API は GET /api/clients。認証なし（LAN 内前提）。
 ルーターへは一切アクセスせず、収集側が書いた JSON を読むだけ。
 """
 
@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 from .config import ApiConfig, clients_json_path
 from .storage import read_snapshot
@@ -23,6 +24,14 @@ app = FastAPI(
     description="自宅ルーター（RTX810）の DHCP リースにあるクライアント一覧を返す",
     version="0.1.0",
 )
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def dashboard() -> FileResponse:
+    """人が閲覧するためのクライアント一覧画面を返す。"""
+    return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
 
 
 @app.get("/api/clients")

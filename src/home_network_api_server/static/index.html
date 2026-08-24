@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ネットワークの端末一覧</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 1040px; margin: 0 auto; padding: 24px; background: Canvas; color: CanvasText; }
+      h1 { margin: 0; font-size: 1.5rem; }
+      header, .toolbar, .summary { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      header { justify-content: space-between; margin-bottom: 20px; }
+      .summary { color: GrayText; font-size: .9rem; }
+      button, input { font: inherit; padding: 8px 10px; border: 1px solid color-mix(in srgb, CanvasText 30%, transparent); border-radius: 6px; background: Canvas; color: CanvasText; }
+      button { cursor: pointer; }
+      input { flex: 1 1 220px; }
+      #status { margin: 18px 0; color: GrayText; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); white-space: nowrap; }
+      th { color: GrayText; font-size: .8rem; }
+      .connection, .arp { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: .8rem; }
+      .wifi-2-4ghz { background: #1769aa; color: white; } .wifi-5ghz { background: #7048b8; color: white; }
+      .wired { background: #0c7c59; color: white; }
+      .unknown { background: #777; color: white; } .offline { color: GrayText; }
+      @media (max-width: 700px) { body { padding: 16px; } th:nth-child(4), td:nth-child(4), th:nth-child(5), td:nth-child(5) { display: none; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>ネットワークの端末一覧</h1>
+      <button id="reload" type="button">更新</button>
+    </header>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="名前、IP、MACで絞り込み" autocomplete="off">
+      <span class="summary" id="summary"></span>
+    </div>
+    <p id="status">読み込み中…</p>
+    <table>
+      <thead><tr><th>IP アドレス</th><th>端末名</th><th>接続</th><th>ARP</th><th>MAC アドレス</th></tr></thead>
+      <tbody id="clients"></tbody>
+    </table>
+    <script>
+      const clients = document.querySelector('#clients');
+      const status = document.querySelector('#status');
+      const summary = document.querySelector('#summary');
+      const search = document.querySelector('#search');
+      let snapshot = null;
+
+      const text = value => value == null || value === '' ? '—' : String(value);
+      const escapeHtml = value => text(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
+      const formatDate = value => value ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—';
+      const macAddress = mac => mac.replaceAll('-', ':');
+      const ipParts = ip => (ip || '').split('.').map(part => Number(part));
+      const compareIpAddress = ([, left], [, right]) => {
+        const leftParts = ipParts(left.ip);
+        const rightParts = ipParts(right.ip);
+        for (let index = 0; index < 4; index += 1) {
+          const difference = (leftParts[index] ?? Infinity) - (rightParts[index] ?? Infinity);
+          if (difference) return difference;
+        }
+        return 0;
+      };
+      const connection = item => {
+        if (!item.connection) return '<span class="offline">不明</span>';
+        const { medium, band } = item.connection;
+        const label = medium === 'wifi' ? `Wi-Fi ${band || ''}` : medium === 'wired' ? '有線' : medium;
+        const connectionClass = medium === 'wifi' && band ? `wifi-${band.replace('.', '-').toLowerCase()}` : medium || 'unknown';
+        return `<span class="connection ${escapeHtml(connectionClass)}">${escapeHtml(label)}</span>`;
+      };
+      const arp = item => item.arp?.present
+        ? `<span class="arp">あり (${escapeHtml(item.arp.ttl_seconds)}秒)</span>`
+        : '<span class="offline">なし</span>';
+
+      function render() {
+        if (!snapshot) return;
+        const query = search.value.trim().toLocaleLowerCase();
+        const rows = Object.entries(snapshot.clients)
+          .filter(([mac, item]) => [mac, item.hostname, item.ip].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+          .sort(compareIpAddress);
+        clients.innerHTML = rows.map(([mac, item]) => `<tr>
+          <td>${escapeHtml(item.ip)}</td><td>${escapeHtml(item.hostname)}</td><td>${connection(item)}</td>
+          <td>${arp(item)}</td><td><code>${escapeHtml(macAddress(mac))}</code></td></tr>`).join('');
+        summary.textContent = `${rows.length} / ${snapshot.count} 台を表示`;
+      }
+
+      async function load() {
+        status.textContent = '読み込み中…';
+        try {
+          const response = await fetch('/api/clients', { cache: 'no-store' });
+          if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
+          snapshot = await response.json();
+          status.textContent = `最終取得: ${formatDate(snapshot.updated_at)}`;
+          render();
+        } catch (error) {
+          snapshot = null;
+          clients.innerHTML = '';
+          summary.textContent = '';
+          status.textContent = `読み込めませんでした: ${error.message}`;
+        }
+      }
+      search.addEventListener('input', render);
+      document.querySelector('#reload').addEventListener('click', load);
+      load();
+    </script>
+  </body>
+</html>

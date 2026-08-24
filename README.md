@@ -15,6 +15,13 @@ LAN 内向けの REST API で返すための小さなツール群。
 ## エンドポイント
 
 ```
+GET /
+```
+
+人がブラウザで見るための端末一覧画面。ページを開いた後、既存の API から最新の
+スナップショットを取得する。
+
+```
 GET /api/clients
 ```
 
@@ -135,6 +142,7 @@ uv run home-network-collector --raw
 
 # API サーバー
 uv run home-network-api
+open http://localhost:8000/
 curl -s http://localhost:8000/api/clients | jq
 ```
 

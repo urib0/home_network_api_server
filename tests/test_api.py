@@ -55,4 +55,11 @@ def test_更新後は最新の内容を返す(client: TestClient, tmp_path: Path
 
 def test_他のエンドポイントは404(client: TestClient):
     assert client.get("/api/cluents").status_code == 404
-    assert client.get("/").status_code == 404
+
+
+def test_トップページは閲覧画面を返す(client: TestClient):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "ネットワークの端末一覧" in response.text
