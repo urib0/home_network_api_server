@@ -20,7 +20,7 @@ logger = logging.getLogger("home_network_api_server.api")
 
 app = FastAPI(
     title="Home Network API",
-    description="自宅ルーター（Archer A10）に接続中のクライアント一覧を返す",
+    description="自宅ルーター（RTX810）の DHCP リースにあるクライアント一覧を返す",
     version="0.1.0",
 )
 

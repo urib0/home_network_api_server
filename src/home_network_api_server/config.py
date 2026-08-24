@@ -37,30 +37,45 @@ def clients_json_path() -> Path:
 
 @dataclass(frozen=True, slots=True)
 class RouterConfig:
-    """ルーターへのログイン情報。"""
+    """RTX810 へ SSH でログインするための設定。"""
 
     host: str
+    port: int
     username: str
     password: str
     timeout: int
 
     @classmethod
     def from_env(cls) -> RouterConfig:
+        # RTX810 の SSH は必ずユーザー名を要求する (login user で作ったもの)。
+        # 既定値を置くと、間違ったユーザー名での認証失敗として現れて分かりにくい。
+        username = os.environ.get("ROUTER_USERNAME")
+        if not username:
+            raise ConfigError("環境変数 ROUTER_USERNAME が設定されていません")
+
         password = os.environ.get("ROUTER_PASSWORD")
         if not password:
             raise ConfigError("環境変数 ROUTER_PASSWORD が設定されていません")
 
-        host = os.environ.get("ROUTER_HOST", "http://192.168.0.1")
-        # tplinkrouterc6u はスキーム付きの URL を期待する
-        if "://" not in host:
-            host = f"http://{host}"
-
         return cls(
-            host=host,
-            username=os.environ.get("ROUTER_USERNAME", "admin"),
+            host=_normalize_host(os.environ.get("ROUTER_HOST", "192.168.100.1")),
+            port=_int_env("ROUTER_SSH_PORT", 22),
+            username=username,
             password=password,
             timeout=_int_env("ROUTER_TIMEOUT", 10),
         )
+
+
+def _normalize_host(raw: str) -> str:
+    """ROUTER_HOST をホスト名 / IP だけにする。
+
+    HTTP 管理画面を叩いていた頃の設定ファイルには `http://192.168.0.1` のような
+    値が残っているので、スキームと末尾のスラッシュを落として受け付ける。
+    """
+    host = raw.strip()
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    return host.rstrip("/")
 
 
 @dataclass(frozen=True, slots=True)

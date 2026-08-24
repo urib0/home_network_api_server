@@ -1,126 +1,170 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from tplinkrouterc6u.common.exception import AuthorizeError
 
 from home_network_api_server import collector
 from home_network_api_server.config import ConfigError, RouterConfig, clients_json_path
+from home_network_api_server.rtx import RtxAuthError, RtxError
 from home_network_api_server.storage import read_snapshot
 
-from .conftest import FakeConnection, FakeDevice
+from .conftest import DHCP_STATUS
 
 
-class FakeRouter:
-    """authorize -> get_status -> logout の呼び出し順を検証するためのスタブ。"""
+class FakeSession:
+    """RtxSession の代わり。呼び出し順とログアウトの有無を記録する。"""
 
-    def __init__(self, devices, *, status_error: Exception | None = None):
-        self._devices = devices
-        self._status_error = status_error
+    def __init__(self, output: str = "", *, error: Exception | None = None):
+        self._output = output
+        self._error = error
         self.calls: list[str] = []
 
-    def authorize(self):
-        self.calls.append("authorize")
+    def __enter__(self) -> FakeSession:
+        self.calls.append("connect")
+        return self
 
-    def get_status(self):
-        self.calls.append("get_status")
-        if self._status_error:
-            raise self._status_error
-        return SimpleNamespace(
-            devices=self._devices,
-            clients_total=len(self._devices),
-            wired_total=sum(1 for d in self._devices if d.type is FakeConnection.WIRED),
-            wifi_clients_total=sum(1 for d in self._devices if d.type is not FakeConnection.WIRED),
-        )
+    def __exit__(self, *exc_info) -> None:
+        self.calls.append("close")
 
-    def logout(self):
-        self.calls.append("logout")
+    def run(self, command: str) -> str:
+        self.calls.append(command)
+        if self._error:
+            raise self._error
+        return self._output
 
 
 @pytest.fixture
 def config() -> RouterConfig:
-    return RouterConfig(host="http://192.168.0.1", username="admin", password="secret", timeout=10)
-
-
-def _patch_provider(monkeypatch: pytest.MonkeyPatch, router: FakeRouter) -> None:
-    monkeypatch.setattr(
-        collector.TplinkRouterProvider, "get_client", staticmethod(lambda *a, **kw: router)
+    return RouterConfig(
+        host="192.168.100.1", port=22, username="hnapi", password="secret", timeout=10
     )
 
 
+def _patch_session(monkeypatch: pytest.MonkeyPatch, session: FakeSession) -> FakeSession:
+    monkeypatch.setattr(collector, "RtxSession", lambda config: session)
+    return session
+
+
 def test_collect_once_がJSONを書く(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: RouterConfig):
-    devices = [
-        FakeDevice(FakeConnection.HOST_5G, "66-37-F6-1F-BF-8B", "192.168.0.102", "MacBookPro"),
-        FakeDevice(FakeConnection.WIRED, "A0-66-10-0F-86-27", "192.168.0.54", "mhf"),
-    ]
-    router = FakeRouter(devices)
-    _patch_provider(monkeypatch, router)
+    session = _patch_session(monkeypatch, FakeSession(DHCP_STATUS))
 
     path = tmp_path / "clients.json"
-    assert collector.collect_once(config, path) == 2
+    assert collector.collect_once(config, path) == 3
 
     snapshot = read_snapshot(path)
-    assert snapshot["count"] == 2
-    assert snapshot["clients"]["A0-66-10-0F-86-27"]["type"] == "wired"
-    assert router.calls == ["authorize", "get_status", "logout"]
+    assert snapshot["schema_version"] == 2
+    assert snapshot["count"] == 3
+    assert snapshot["clients"]["00-A0-DE-11-22-33"]["hostname"] == "nas"
+    # 残り時間の基準は updated_at と同じ時刻を使う
+    assert snapshot["clients"]["00-A0-DE-11-22-33"]["lease_expires"] > snapshot["updated_at"]
+    assert session.calls == ["connect", collector.DHCP_STATUS_COMMAND, "close"]
 
 
 def test_取得に失敗してもログアウトする(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: RouterConfig):
-    router = FakeRouter([], status_error=RuntimeError("timeout"))
-    _patch_provider(monkeypatch, router)
+    session = _patch_session(monkeypatch, FakeSession(error=RtxError("timeout")))
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RtxError):
         collector.collect_once(config, tmp_path / "clients.json")
 
-    assert router.calls == ["authorize", "get_status", "logout"]
+    assert session.calls[-1] == "close"
 
 
 def test_取得に失敗しても既存JSONを壊さない(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: RouterConfig):
     path = tmp_path / "clients.json"
-    _patch_provider(monkeypatch, FakeRouter([FakeDevice(FakeConnection.WIRED, "AA-BB-CC-DD-EE-FF", "192.168.0.9", "x")]))
+    _patch_session(monkeypatch, FakeSession(DHCP_STATUS))
     collector.collect_once(config, path)
     original = path.read_text(encoding="utf-8")
 
-    _patch_provider(monkeypatch, FakeRouter([], status_error=RuntimeError("router down")))
-    with pytest.raises(RuntimeError):
+    _patch_session(monkeypatch, FakeSession(error=RtxError("router down")))
+    with pytest.raises(RtxError):
         collector.collect_once(config, path)
 
     assert path.read_text(encoding="utf-8") == original
 
 
-def test_main_は失敗時に非ゼロを返す(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_リースが0件でも書き込むが警告する(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: RouterConfig, caplog
+):
+    # 形式が想定と違うと 0 件になりうるので、気付けるように警告を出す
+    _patch_session(monkeypatch, FakeSession("DHCP Scope number: 1\n"))
+
+    path = tmp_path / "clients.json"
+    assert collector.collect_once(config, path) == 0
+    assert read_snapshot(path)["count"] == 0
+    assert "--raw" in caplog.text
+
+
+@pytest.fixture
+def env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    monkeypatch.setenv("ROUTER_USERNAME", "hnapi")
     monkeypatch.setenv("ROUTER_PASSWORD", "secret")
-    monkeypatch.setenv("CLIENTS_JSON_PATH", str(tmp_path / "clients.json"))
-    _patch_provider(monkeypatch, FakeRouter([], status_error=RuntimeError("router down")))
-
-    assert collector.main() == 1
+    return monkeypatch
 
 
-def test_main_は認証失敗なら2を返す(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ROUTER_PASSWORD", "wrong")
-    monkeypatch.setenv("CLIENTS_JSON_PATH", str(tmp_path / "clients.json"))
-    _patch_provider(monkeypatch, FakeRouter([], status_error=AuthorizeError()))
+def test_main_は成功したら0を返す(tmp_path: Path, env: pytest.MonkeyPatch):
+    env.setenv("CLIENTS_JSON_PATH", str(tmp_path / "clients.json"))
+    _patch_session(env, FakeSession(DHCP_STATUS))
+
+    assert collector.main([]) == 0
+    assert read_snapshot(tmp_path / "clients.json")["count"] == 3
+
+
+def test_main_は失敗時に非ゼロを返す(tmp_path: Path, env: pytest.MonkeyPatch):
+    env.setenv("CLIENTS_JSON_PATH", str(tmp_path / "clients.json"))
+    _patch_session(env, FakeSession(error=RtxError("router down")))
+
+    assert collector.main([]) == 1
+
+
+def test_main_は認証失敗なら2を返す(tmp_path: Path, env: pytest.MonkeyPatch):
+    env.setenv("CLIENTS_JSON_PATH", str(tmp_path / "clients.json"))
+    _patch_session(env, FakeSession(error=RtxAuthError("ログインに失敗")))
 
     # 再試行では直らない設定不備なので、一時的失敗 (1) と区別する
-    assert collector.main() == 2
+    assert collector.main([]) == 2
 
 
-def test_main_はパスワード未設定なら2を返す(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("ROUTER_PASSWORD", raising=False)
-    assert collector.main() == 2
+def test_main_はパスワード未設定なら2を返す(env: pytest.MonkeyPatch):
+    env.delenv("ROUTER_PASSWORD")
+    assert collector.main([]) == 2
 
 
-def test_ROUTER_HOST_はスキームを補う(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ROUTER_PASSWORD", "secret")
-    monkeypatch.setenv("ROUTER_HOST", "192.168.0.1")
-    assert RouterConfig.from_env().host == "http://192.168.0.1"
+def test_main_はユーザー名未設定なら2を返す(env: pytest.MonkeyPatch):
+    env.delenv("ROUTER_USERNAME")
+    assert collector.main([]) == 2
 
 
-def test_ROUTER_TIMEOUT_が不正ならConfigError(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ROUTER_PASSWORD", "secret")
-    monkeypatch.setenv("ROUTER_TIMEOUT", "fast")
+def test_main_rawはJSONを書かずに出力を表示する(
+    tmp_path: Path, env: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    path = tmp_path / "clients.json"
+    env.setenv("CLIENTS_JSON_PATH", str(path))
+    _patch_session(env, FakeSession(DHCP_STATUS))
+
+    assert collector.main(["--raw"]) == 0
+    assert "192.168.100.2" in capsys.readouterr().out
+    assert not path.exists()
+
+
+def test_ROUTER_HOST_はスキームを落とす(env: pytest.MonkeyPatch):
+    # HTTP 管理画面を叩いていた頃の設定ファイルをそのまま使えるようにする
+    env.setenv("ROUTER_HOST", "http://192.168.0.1/")
+    assert RouterConfig.from_env().host == "192.168.0.1"
+
+
+def test_ROUTER_HOST_の既定値(env: pytest.MonkeyPatch):
+    env.delenv("ROUTER_HOST", raising=False)
+    assert RouterConfig.from_env().host == "192.168.100.1"
+
+
+def test_ROUTER_SSH_PORT_を変えられる(env: pytest.MonkeyPatch):
+    env.setenv("ROUTER_SSH_PORT", "2222")
+    assert RouterConfig.from_env().port == 2222
+
+
+def test_ROUTER_TIMEOUT_が不正ならConfigError(env: pytest.MonkeyPatch):
+    env.setenv("ROUTER_TIMEOUT", "fast")
     with pytest.raises(ConfigError):
         RouterConfig.from_env()
 

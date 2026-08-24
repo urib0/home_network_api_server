@@ -1,86 +1,137 @@
-"""output.txt の実データを基にした変換テスト。"""
+"""`show status dhcp` の出力を変換するテスト。"""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
-from home_network_api_server.models import classify, device_to_entry, devices_to_clients, normalize_mac
-
-from .conftest import FakeConnection, FakeDevice
-
-
-@pytest.mark.parametrize(
-    ("connection", "expected"),
-    [
-        (FakeConnection.WIRED, ("wired", None, False)),
-        (FakeConnection.HOST_2G, ("wireless", "2.4G", False)),
-        (FakeConnection.HOST_5G, ("wireless", "5G", False)),
-        (FakeConnection.HOST_6G, ("wireless", "6G", False)),
-        (FakeConnection.GUEST_2G, ("wireless", "2.4G", True)),
-        (FakeConnection.GUEST_5G, ("wireless", "5G", True)),
-        (FakeConnection.IOT_5G, ("wireless", "5G", False)),
-        (FakeConnection.UNKNOWN, ("unknown", None, False)),
-    ],
+from home_network_api_server.models import (
+    find_mac,
+    normalize_mac,
+    parse_dhcp_status,
+    parse_hostname,
+    parse_remaining_lease,
 )
-def test_classify(connection, expected):
-    assert classify(connection) == expected
 
+from .conftest import DHCP_STATUS, DHCP_SUMMARY
 
-def test_classify_未知の値は落とさずunknownにする():
-    assert classify("host_7g") == ("unknown", None, False)
-    assert classify(None) == ("unknown", None, False)
+JST = timezone(timedelta(hours=9))
+NOW = datetime(2026, 8, 24, 14, 0, 0, tzinfo=JST)
 
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("66-37-f6-1f-bf-8b", "66-37-F6-1F-BF-8B"),
-        ("66:37:F6:1F:BF:8B", "66-37-F6-1F-BF-8B"),
-        ("  A0-66-10-0F-86-27 ", "A0-66-10-0F-86-27"),
+        ("00:a0:de:11:22:33", "00-A0-DE-11-22-33"),
+        ("00-a0-de-11-22-33", "00-A0-DE-11-22-33"),
+        ("00 a0 de 11 22 33", "00-A0-DE-11-22-33"),
+        ("  AC-DE-48-00-11-22 ", "AC-DE-48-00-11-22"),
     ],
 )
 def test_normalize_mac(raw, expected):
     assert normalize_mac(raw) == expected
 
 
-def test_device_to_entry_無線():
-    device = FakeDevice(FakeConnection.HOST_5G, "66-37-F6-1F-BF-8B", "192.168.0.102", "MacBookPro")
-    assert device_to_entry(device) == {
-        "type": "wireless",
-        "band": "5G",
-        "guest": False,
-        "ip": "192.168.0.102",
-        "hostname": "MacBookPro",
+def test_normalize_mac_は桁数が違えばValueError():
+    with pytest.raises(ValueError):
+        normalize_mac("00:a0:de:11:22")
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (" Client ethernet address: 00:a0:de:11:22:33", "00-A0-DE-11-22-33"),
+        ("        (type) Client ID: (01) 00 a0 de 11 22 33", "00-A0-DE-11-22-33"),
+        ("  1:      192.168.100.2:  00:a0:de:11:22:33, nas", "00-A0-DE-11-22-33"),
+        ("         Remaining lease: 2days 16hours 3min. 50secs.", None),
+        ("          Leased address: 192.168.100.2", None),
+        ("                  All: 509", None),
+    ],
+)
+def test_find_mac(line, expected):
+    assert find_mac(line) == expected
+
+
+def test_find_mac_は長すぎるクライアントIDを捨てる(caplog: pytest.LogCaptureFixture):
+    # DUID は下位 6 バイトが MAC とは限らないので、推測せずに落とす
+    assert find_mac("(type) Client ID: (ff) 00 01 02 03 04 05 06 07") is None
+    assert "MAC として解釈できない" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("Remaining lease: 2days 16hours 3min. 50secs.", timedelta(days=2, hours=16, minutes=3, seconds=50)),
+        ("Remaining lease: 1day 4hours 5min. 6secs.", timedelta(days=1, hours=4, minutes=5, seconds=6)),
+        ("Remaining lease: 16hours 30min. 0secs.", timedelta(hours=16, minutes=30)),
+        # 「残り時間」の語が無ければ対象外（数字の並びを誤って拾わない）
+        ("Leased address: 192.168.100.2", None),
+        ("Host Name: 2days", None),
+    ],
+)
+def test_parse_remaining_lease(line, expected):
+    assert parse_remaining_lease(line) == expected
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("               Host Name: nas", "nas"),
+        ("ホスト名: nas", "nas"),
+        # summary 形式は MAC の後ろにカンマ区切りでホスト名を置く
+        ("  1:      192.168.100.2:  00:a0:de:11:22:33, nas", "nas"),
+        ("  3:      192.168.100.4:  ac:de:48:00:11:22", None),
+        ("                  All: 509", None),
+    ],
+)
+def test_parse_hostname(line, expected):
+    assert parse_hostname(line) == expected
+
+
+def test_parse_dhcp_status():
+    clients = parse_dhcp_status(DHCP_STATUS, NOW)
+
+    assert list(clients) == ["00-A0-DE-11-22-33", "00-A0-DE-44-55-66", "AC-DE-48-00-11-22"]
+    assert clients["00-A0-DE-11-22-33"] == {
+        "ip": "192.168.100.2",
+        "hostname": "nas",
+        # 2026-08-24 14:00:00 + 2days 16h 3m 50s
+        "lease_expires": "2026-08-27T06:03:50+09:00",
     }
+    # Client ethernet address 形式でも同じように読める
+    assert clients["00-A0-DE-44-55-66"]["hostname"] == "raspberrypi"
+    # ホスト名を送ってこない端末
+    assert clients["AC-DE-48-00-11-22"]["hostname"] is None
+    assert clients["AC-DE-48-00-11-22"]["lease_expires"] == "2026-08-25T06:30:00+09:00"
 
 
-def test_device_to_entry_有線():
-    device = FakeDevice(FakeConnection.WIRED, "A0-66-10-0F-86-27", "192.168.0.54", "mhf")
-    assert device_to_entry(device) == {
-        "type": "wired",
-        "band": None,
-        "guest": False,
-        "ip": "192.168.0.54",
-        "hostname": "mhf",
-    }
+def test_parse_dhcp_status_はIPをブロックの上の行から拾う():
+    # 「Leased address:」の行に MAC は無い。直前に見えた IP を使う
+    clients = parse_dhcp_status(DHCP_STATUS, NOW)
+    assert clients["00-A0-DE-44-55-66"]["ip"] == "192.168.100.3"
 
 
-def test_device_to_entry_ホスト名が空ならNone():
-    device = FakeDevice(FakeConnection.WIRED, "74-FE-CE-6D-77-2D", "192.168.0.11", "")
-    assert device_to_entry(device)["hostname"] is None
+def test_parse_dhcp_status_はヘッダと集計行を拾わない():
+    # Network address / All / Leased などは MAC が無いので落ちる
+    assert len(parse_dhcp_status(DHCP_STATUS, NOW)) == 3
 
 
-def test_devices_to_clients_はMACをキーにしてソートする():
-    devices = [
-        FakeDevice(FakeConnection.HOST_5G, "66-37-F6-1F-BF-8B", "192.168.0.102", "MacBookPro"),
-        FakeDevice(FakeConnection.WIRED, "00-A0-DE-A9-4D-02", "192.168.0.2", "Unknown"),
-        FakeDevice(FakeConnection.HOST_2G, "A8-48-FA-EC-5D-AC", "192.168.0.22", "SwitchBot-HubMini"),
-    ]
-    clients = devices_to_clients(devices)
+def test_parse_dhcp_status_はsummary形式も読める():
+    clients = parse_dhcp_status(DHCP_SUMMARY, NOW)
 
-    assert list(clients) == ["00-A0-DE-A9-4D-02", "66-37-F6-1F-BF-8B", "A8-48-FA-EC-5D-AC"]
-    assert clients["A8-48-FA-EC-5D-AC"]["band"] == "2.4G"
+    assert list(clients) == ["00-A0-DE-11-22-33", "00-A0-DE-44-55-66", "AC-DE-48-00-11-22"]
+    assert clients["00-A0-DE-11-22-33"]["ip"] == "192.168.100.2"
+    assert clients["00-A0-DE-11-22-33"]["hostname"] == "nas"
+    # summary は残り時間を出さない
+    assert all(v["lease_expires"] is None for v in clients.values())
 
 
-def test_devices_to_clients_空でも壊れない():
-    assert devices_to_clients([]) == {}
+def test_parse_dhcp_status_はnow省略時に現在時刻を使う():
+    clients = parse_dhcp_status(DHCP_STATUS)
+    expires = datetime.fromisoformat(clients["00-A0-DE-11-22-33"]["lease_expires"])
+    assert timedelta(days=2) < expires - datetime.now().astimezone() < timedelta(days=3)
+
+
+def test_parse_dhcp_status_空でも壊れない():
+    assert parse_dhcp_status("", NOW) == {}

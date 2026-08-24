@@ -1,9 +1,9 @@
 # home-network-api-server
 
-自宅の WiFi ルーター（TP-Link Archer A10）に接続中のクライアント一覧を定期的に取得し、
+自宅のルーター（Yamaha RTX810）の DHCP リースからクライアント一覧を定期的に取得し、
 LAN 内向けの REST API で返すための小さなツール群。
 
-- **collector** — ルーターへログインしてクライアント一覧を取得し、JSON へ上書き保存するワンショット処理（systemd timer で定期実行）
+- **collector** — RTX810 へ SSH でログインして `show status dhcp` を実行し、JSON へ上書き保存するワンショット処理（systemd timer で定期実行）
 - **api** — その JSON を読んで返すだけの HTTP サーバー（FastAPI + uvicorn）
 
 2 つはプロセスとして完全に分離しており、共有するのは JSON ファイル 1 つだけ。
@@ -19,23 +19,19 @@ GET /api/clients
 
 ```json
 {
-  "schema_version": 1,
-  "updated_at": "2026-08-12T01:40:00+09:00",
+  "schema_version": 2,
+  "updated_at": "2026-08-24T01:40:00+09:00",
   "count": 2,
   "clients": {
-    "66-37-F6-1F-BF-8B": {
-      "type": "wireless",
-      "band": "5G",
-      "guest": false,
-      "ip": "192.168.0.102",
-      "hostname": "MacBookPro"
+    "00-A0-DE-11-22-33": {
+      "ip": "192.168.100.2",
+      "hostname": "nas",
+      "lease_expires": "2026-08-27T09:12:34+09:00"
     },
-    "A0-66-10-0F-86-27": {
-      "type": "wired",
-      "band": null,
-      "guest": false,
-      "ip": "192.168.0.54",
-      "hostname": "mhf"
+    "AC-DE-48-00-11-22": {
+      "ip": "192.168.100.4",
+      "hostname": "iPhone",
+      "lease_expires": "2026-08-26T23:59:59+09:00"
     }
   }
 }
@@ -46,16 +42,70 @@ GET /api/clients
 | 200 | 正常。`updated_at` で鮮度を判断する |
 | 503 | まだ一度も収集されていない、または JSON が壊れている |
 
+`hostname` は端末が DHCP でホスト名を送ってこない場合 `null` になる（実測では 14 台中 3 台）。
+`lease_expires` はルーターが返す残りリース時間を `updated_at` に足した絶対時刻。
+
 認証は無し。LAN 内からのアクセスのみを想定しているため、ルーターのポート開放はしないこと。
+
+### 一覧に出てくる端末・出てこない端末
+
+**RTX810 の DHCP サーバーがリースを持っている端末だけ**が並ぶ。「いま通信しているか」は見ていない。
+
+- 端末側で固定 IP を設定した端末は、DHCP を使わないので**出てこない**
+- 電源を切った端末も、リース期限（既定 72 時間）までは**出続ける**
+
+すべての端末をルーター側の `dhcp scope bind` で固定する運用を前提にしている。
+在宅判定のように「いま繋がっているか」が要るなら `show arp` を併用する必要がある
+（[docs/design.md](docs/design.md) 3 章）。
+
+## RTX810 側の設定
+
+collector は `show` コマンドしか実行しないので、**管理者権限は不要**。
+一般ユーザーでログインできれば足りる。
+
+```
+# コンソール（telnet / シリアル）から
+administrator
+sshd host key generate         # 初回のみ。数十秒かかる
+sshd service on
+login user hnapi <パスワード>   # collector 用のユーザーを作る
+save
+```
+
+クライアント一覧を DHCP から取るので、各端末には MAC で IP を予約しておく:
+
+```
+dhcp scope bind 1 192.168.100.2 00:a0:de:11:22:33
+save
+```
+
+確認:
+
+```bash
+ssh hnapi@192.168.100.1
+# ログインしたら show status dhcp と打つ。
+# RTX810 の SSH は exec チャネル（ssh host "コマンド" の形）に対応しないので、
+# コマンドを引数で渡すことはできない。collector も対話シェルを開いて流し込んでいる。
+```
+
+RTX810 の SSH は古い暗号（`diffie-hellman-group1-sha1` / `ssh-rsa`）しか話さないため、
+OpenSSH から手で繋ぐ場合はオプションが要ることがある:
+
+```bash
+ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 -oHostKeyAlgorithms=+ssh-rsa hnapi@192.168.100.1
+```
+
+同じ理由で、collector が使う paramiko は 4 系までに固定している（5 系はこれらを削除済み）。
 
 ## 環境変数
 
 | 変数 | 既定値 | 使う側 | 説明 |
 | --- | --- | --- | --- |
-| `ROUTER_HOST` | `http://192.168.0.1` | collector | ルーターの URL。スキーム省略時は `http://` を補う |
-| `ROUTER_USERNAME` | `admin` | collector | 管理ユーザー名 |
-| `ROUTER_PASSWORD` | （必須） | collector | 管理パスワード。未設定なら終了コード 2 |
-| `ROUTER_TIMEOUT` | `10` | collector | HTTP タイムアウト秒 |
+| `ROUTER_HOST` | `192.168.100.1` | collector | RTX810 の IP。`http://` が付いていても落として使う |
+| `ROUTER_SSH_PORT` | `22` | collector | SSH のポート |
+| `ROUTER_USERNAME` | （必須） | collector | `login user` で作ったユーザー名。未設定なら終了コード 2 |
+| `ROUTER_PASSWORD` | （必須） | collector | そのユーザーのパスワード。未設定なら終了コード 2 |
+| `ROUTER_TIMEOUT` | `10` | collector | 接続とコマンド応答のタイムアウト秒 |
 | `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス。未設定時のみ `$XDG_STATE_HOME` に従う（systemd ユニットは常に明示的に渡す） |
 | `API_HOST` | `0.0.0.0` | api | 待ち受けアドレス |
 | `API_PORT` | `8000` | api | 待ち受けポート |
@@ -64,11 +114,14 @@ GET /api/clients
 
 ```bash
 uv sync
-cp .env.example .env      # ROUTER_PASSWORD を記入する（.env は git 管理外）
+cp .env.example .env      # ROUTER_USERNAME / ROUTER_PASSWORD を記入する（.env は git 管理外）
 
 # 1 回だけ取得
 set -a && source .env && set +a
 uv run home-network-collector
+
+# ルーターの生の出力を見る（パースがおかしいときの確認用）
+uv run home-network-collector --raw
 
 # API サーバー
 uv run home-network-api
@@ -96,7 +149,7 @@ cd ~/home-network-api-server
 # 3. インストール（依存同期・ユニット配置・linger 有効化・起動）
 ./systemd/install.sh
 
-# 4. パスワードを設定して定期取得を開始
+# 4. 認証情報を設定して定期取得を開始
 ${EDITOR:-nano} ~/.config/home-network-api-server/router.env
 systemctl --user start home-network-collector.service   # 初回取得
 systemctl --user start home-network-collector.timer     # 定期取得
@@ -121,6 +174,10 @@ curl -s http://localhost:8000/api/clients | jq
 ユニット内の `%h/home-network-api-server` が実際の配置先に置換される。
 所有権をいじらないので、そのまま `git pull` して `systemctl --user restart` すればよい。
 
+paramiko は `cryptography` に依存する。64bit の Raspberry Pi OS（aarch64）には wheel が
+あるのでそのまま入るが、32bit（armv7l）だと Rust でのビルドが走る。その場合は
+`sudo apt install python3-dev libssl-dev pkg-config` と Rust ツールチェーンが要る。
+
 ### linger（ログアウトしても動かす）
 
 systemd のユーザーインスタンスは既定でログアウト時に停止する。`install.sh` は
@@ -144,3 +201,21 @@ sudo loginctl enable-linger $USER
 書き込みを権限で禁じることはできない（コード上は読むだけ）。
 
 取得間隔は `systemd/home-network-collector.timer` の `OnUnitActiveSec` で調整する（既定 5 分）。
+
+## うまく取れないとき
+
+```bash
+uv run home-network-collector --raw
+```
+
+`show status dhcp` の出力がそのまま出る。RTX810 Rev.11 の実機で確認した形式に
+合わせてあるが、ファームウェアで変わりうるので、見慣れない形をしていたら
+`src/home_network_api_server/models.py` の `parse_dhcp_status()` を直す。
+パースの入口はこの関数 1 つだけに閉じてある。
+
+| 症状 | 見るところ |
+| --- | --- |
+| `SSH ログインに失敗しました` | `login user` の設定と `ROUTER_USERNAME` / `ROUTER_PASSWORD` |
+| `SSH 接続に失敗しました: ... kex` | paramiko が 5 系になっていないか（`uv sync` し直す） |
+| `プロンプトが返りませんでした` | `ROUTER_TIMEOUT` を伸ばす。RTX810 の同時ログイン数の上限にかかっていないか |
+| `DHCP リースが 1 件も読み取れませんでした` | `--raw` で出力を確認する |

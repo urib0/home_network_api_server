@@ -1,5 +1,5 @@
 [Unit]
-Description=Archer A10 のクライアント一覧を取得して JSON に保存する (ワンショット)
+Description=RTX810 の DHCP リース一覧を取得して JSON に保存する (ワンショット)
 Documentation=https://github.com/uribo/home_network_api_server
 # ユーザーインスタンスには network-online.target が無いので順序付けはしない。
 # 起動直後にネットワークが未接続でも、次の timer 発火 (5 分後) で回復する。
@@ -7,7 +7,7 @@ Documentation=https://github.com/uribo/home_network_api_server
 [Service]
 Type=oneshot
 
-# ルーターの IP / ユーザー名 / パスワードはこのファイルに置く (0600)
+# ルーターの IP / SSH のユーザー名 / パスワードはこのファイルに置く (0600)
 # %E はユーザーインスタンスでは ~/.config に解決される
 EnvironmentFile=%E/home-network-api-server/router.env
 

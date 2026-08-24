@@ -18,12 +18,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def test_収集済みならそのまま返す(client: TestClient, tmp_path: Path):
     clients = {
-        "66-37-F6-1F-BF-8B": {
-            "type": "wireless",
-            "band": "5G",
-            "guest": False,
-            "ip": "192.168.0.102",
-            "hostname": "MacBookPro",
+        "00-A0-DE-11-22-33": {
+            "ip": "192.168.100.2",
+            "hostname": "nas",
+            "lease_expires": "2026-08-27T09:12:34+09:00",
         }
     }
     write_snapshot(tmp_path / "clients.json", build_snapshot(clients, datetime.now().astimezone()))
@@ -33,7 +31,7 @@ def test_収集済みならそのまま返す(client: TestClient, tmp_path: Path
     assert response.status_code == 200
     body = response.json()
     assert body["count"] == 1
-    assert body["clients"]["66-37-F6-1F-BF-8B"]["hostname"] == "MacBookPro"
+    assert body["clients"]["00-A0-DE-11-22-33"]["hostname"] == "nas"
     assert "updated_at" in body
 
 

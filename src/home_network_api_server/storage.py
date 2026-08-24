@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def build_snapshot(clients: dict[str, dict[str, Any]], updated_at: datetime) -> dict[str, Any]:

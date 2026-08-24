@@ -1,7 +1,7 @@
 [project]
 name = "home-network-api-server"
 version = "0.1.0"
-description = "Archer A10 に接続中のクライアント一覧を収集し、REST API で返す"
+description = "Yamaha RTX810 の DHCP リースからクライアント一覧を収集し、REST API で返す"
 readme = "README.md"
 authors = [
     { name = "uribo", email = "ur1b0.dev@gmail.com" }
@@ -9,7 +9,9 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
-    "tplinkrouterc6u>=5.28.1",
+    # paramiko 5 は SHA-1 系の鍵交換と ssh-rsa ホスト鍵を削除しており、
+    # RTX810 の SSH サーバーとネゴシエートできない (docs/design.md 4 章)
+    "paramiko>=3.5,<5",
     "uvicorn>=0.34",
 ]
 

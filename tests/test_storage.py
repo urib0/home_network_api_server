@@ -12,12 +12,10 @@ from home_network_api_server.storage import build_snapshot, read_snapshot, write
 
 def _snapshot() -> dict:
     clients = {
-        "66-37-F6-1F-BF-8B": {
-            "type": "wireless",
-            "band": "5G",
-            "guest": False,
-            "ip": "192.168.0.102",
-            "hostname": "MacBookPro",
+        "00-A0-DE-11-22-33": {
+            "ip": "192.168.100.2",
+            "hostname": "nas",
+            "lease_expires": "2026-08-27T09:12:34+09:00",
         }
     }
     return build_snapshot(clients, datetime(2026, 8, 12, 1, 40, 0).astimezone())
@@ -25,17 +23,17 @@ def _snapshot() -> dict:
 
 def test_build_snapshot_のトップレベル構造(tmp_path: Path):
     snapshot = _snapshot()
-    assert snapshot["schema_version"] == 1
+    assert snapshot["schema_version"] == 2
     assert snapshot["count"] == 1
     assert snapshot["updated_at"].startswith("2026-08-12T01:40:00")
-    assert "66-37-F6-1F-BF-8B" in snapshot["clients"]
+    assert "00-A0-DE-11-22-33" in snapshot["clients"]
 
 
 def test_write_snapshot_で読み書きできる(tmp_path: Path):
     path = tmp_path / "clients.json"
     write_snapshot(path, _snapshot())
 
-    assert read_snapshot(path)["clients"]["66-37-F6-1F-BF-8B"]["ip"] == "192.168.0.102"
+    assert read_snapshot(path)["clients"]["00-A0-DE-11-22-33"]["ip"] == "192.168.100.2"
     assert json.loads(path.read_text(encoding="utf-8"))["count"] == 1
 
 

@@ -112,12 +112,13 @@ systemctl --user enable --now home-network-api.service
 systemctl --user enable home-network-collector.timer
 
 # パスワードが雛形のままなら timer は起動しない (5 分ごとに失敗ログが出るだけなので)
-if grep -q '^ROUTER_PASSWORD=ここに' "$CONF_DIR/router.env"; then
+if grep -q '^ROUTER_PASSWORD=ここに' "$CONF_DIR/router.env" \
+    || grep -q '^ROUTER_USERNAME=ここに' "$CONF_DIR/router.env"; then
     cat <<EOF
 
-インストール完了。ただしパスワードが未設定です。
+インストール完了。ただしユーザー名 / パスワードが未設定です。
 
-  1. パスワードを設定:   \${EDITOR:-nano} $CONF_DIR/router.env
+  1. 認証情報を設定:     \${EDITOR:-nano} $CONF_DIR/router.env
   2. 初回取得を手動実行: systemctl --user start home-network-collector.service
   3. 定期取得を開始:     systemctl --user start home-network-collector.timer
   4. 結果を確認:         curl http://localhost:8000/api/clients
