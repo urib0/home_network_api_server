@@ -172,7 +172,7 @@ MAC が JSON のキーなので、MAC の無いレコードは存在できない
       "ip": "192.168.100.2",
       "hostname": "nas" | null,
       "lease_expires": "2026-08-27T09:12:34+09:00" | null,
-      "arp": {"present": true, "interface": "LAN1(port1)", "ttl_seconds": 928, "entry_type": "dynamic"},
+      "arp": {"present": true, "ip": "192.168.100.2", "interface": "LAN1(port1)", "ttl_seconds": 928, "entry_type": "dynamic"},
       "connection": {"medium": "wifi" | "wired", "band": "2.4ghz" | "5ghz"} | null
     }
   }

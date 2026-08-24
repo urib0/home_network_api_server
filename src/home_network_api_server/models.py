@@ -186,6 +186,7 @@ def parse_arp_table(text: str) -> dict[str, dict[str, Any]]:
             continue
         ttl = match.group("ttl").lower()
         entries[normalize_mac(match.group("mac"))] = {
+            "ip": match.group("ip"),
             "interface": match.group("interface"),
             "ttl_seconds": int(ttl) if ttl.isdigit() else None,
             "entry_type": "static" if ttl == "permanent" else "dynamic",
@@ -203,7 +204,13 @@ def merge_client_sources(
     for mac, client in dhcp_clients.items():
         merged = dict(client)
         arp = arp_entries.get(mac)
-        merged["arp"] = {"present": False} if arp is None else {"present": True, **arp}
+        if arp is None:
+            merged["arp"] = {"present": False}
+        else:
+            # DHCP は端末の母集団として使う。静的 IP の端末では DHCP のリースが
+            # 古くなり得るため、同じ MAC を ARP で観測した場合はその IP を正とする。
+            merged["ip"] = arp["ip"]
+            merged["arp"] = {"present": True, **arp}
         merged["connection"] = archer_connections.get(mac)
         clients[mac] = merged
     return dict(sorted(clients.items()))

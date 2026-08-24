@@ -59,7 +59,7 @@ Content-Type: application/json
       "ip": "192.168.100.2",
       "hostname": "nas",
       "lease_expires": "2026-08-27T09:12:34+09:00",
-      "arp": {"present": true, "interface": "LAN1(port1)", "ttl_seconds": 928, "entry_type": "dynamic"},
+      "arp": {"present": true, "ip": "192.168.100.2", "interface": "LAN1(port1)", "ttl_seconds": 928, "entry_type": "dynamic"},
       "connection": {"medium": "wifi", "band": "5ghz", "ssid": "home", "signal": -48}
     },
     "AC-DE-48-00-11-22": {
@@ -79,7 +79,9 @@ Content-Type: application/json
 
 `hostname` は端末が DHCP でホスト名を送ってこない場合 `null` になる（実測では 14 台中 3 台）。
 `lease_expires` はルーターが返す残りリース時間を `updated_at` に足した絶対時刻。
-`arp` は RTX810 が保持する ARP エントリ、`connection` は Archer A10 で現在見えている
+同じMACアドレスがARPにある場合、一覧の `ip` にはARPで観測したIPを使う。これにより、
+静的IPの端末に残った古いDHCPリースより現在のIPを優先する。`arp` は RTX810 が保持する
+ARP エントリ、`connection` は Archer A10 で現在見えている
 接続種別を表す。ARP は「最近の通信」、Archer は「現在の Wi-Fi / 有線接続」を示すため、
 どちらも在宅判定そのものではない。Archer の設定が無い、または取得に失敗した場合は
 `connection` が `null` となり、`sources.archer` に状態を記録する。

@@ -142,6 +142,7 @@ def test_parse_dhcp_status_空でも壊れない():
 def test_parse_arp_table():
     entries = parse_arp_table(ARP_TABLE)
     assert entries["00-A0-DE-11-22-33"] == {
+        "ip": "192.168.100.2",
         "interface": "LAN1(port1)",
         "ttl_seconds": 1157,
         "entry_type": "dynamic",
@@ -153,14 +154,19 @@ def test_parse_arp_table():
 def test_merge_client_sources_はDHCPを母集団にする():
     clients = merge_client_sources(
         {"00-A0-DE-11-22-33": {"ip": "192.168.100.2"}},
-        {"00-A0-DE-11-22-33": {"ttl_seconds": 10}},
+        {"00-A0-DE-11-22-33": {"ip": "192.168.100.9", "ttl_seconds": 10}},
         {
             "00-A0-DE-11-22-33": {"medium": "wifi", "band": "5ghz"},
             "AA-BB-CC-DD-EE-FF": {"medium": "wired"},
         },
     )
     assert list(clients) == ["00-A0-DE-11-22-33"]
-    assert clients["00-A0-DE-11-22-33"]["arp"] == {"present": True, "ttl_seconds": 10}
+    assert clients["00-A0-DE-11-22-33"]["ip"] == "192.168.100.9"
+    assert clients["00-A0-DE-11-22-33"]["arp"] == {
+        "present": True,
+        "ip": "192.168.100.9",
+        "ttl_seconds": 10,
+    }
     assert clients["00-A0-DE-11-22-33"]["connection"] == {
         "medium": "wifi",
         "band": "5ghz",
