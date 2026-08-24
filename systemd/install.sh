@@ -21,7 +21,7 @@ XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 CONF_DIR="$XDG_CONFIG_HOME/home-network-api-server"
 UNIT_DIR="$XDG_CONFIG_HOME/systemd/user"
 
-# 収集結果の置き場。ユニット側の CLIENTS_JSON_PATH と一致させること。
+# 収集結果の置き場。paths.env で API / collector の両方へ渡す。
 # systemd の StateDirectory= / %S は使わない (user unit での解決先が
 # systemd 252 では ~/.config、新しい版では ~/.local/state と食い違うため)。
 STATE_DIR="$HOME/.local/state/home-network-api-server"
@@ -73,6 +73,15 @@ chmod 700 "$CONF_DIR"
 if [[ ! -f $CONF_DIR/router.env ]]; then
     echo "==> $CONF_DIR/router.env を作成 (パスワードを編集してください)"
     install -m 0600 "$APP_DIR/systemd/router.env.example" "$CONF_DIR/router.env"
+fi
+
+# API と collector が同じスナップショットを読むための共通設定。
+# パスはユーザーごとに異なるため、雛形をそのままコピーせずここで展開する。
+if [[ ! -f $CONF_DIR/paths.env ]]; then
+    echo "==> $CONF_DIR/paths.env を作成 (API と collector の共通保存先)"
+    sed "s|__CLIENTS_JSON_PATH__|$STATE_DIR/clients.json|" \
+        "$APP_DIR/systemd/paths.env.example" > "$CONF_DIR/paths.env"
+    chmod 0600 "$CONF_DIR/paths.env"
 fi
 
 # --- 状態ディレクトリ ---

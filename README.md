@@ -123,7 +123,7 @@ ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 -oHostKeyAlgorithms=+ssh-rsa hna
 | `ROUTER_TIMEOUT` | `10` | collector | 接続とコマンド応答のタイムアウト秒 |
 | `ARCHER_HOST` / `ARCHER_USERNAME` / `ARCHER_PASSWORD` | （任意） | collector | Archer A10 の管理画面。3 つすべてを設定すると Wi-Fi / 有線の接続種別を補う |
 | `ARCHER_TIMEOUT` | `10` | collector | Archer A10 の応答タイムアウト秒 |
-| `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス。未設定時のみ `$XDG_STATE_HOME` に従う（systemd ユニットは常に明示的に渡す） |
+| `CLIENTS_JSON_PATH` | `~/.local/state/home-network-api-server/clients.json` | 両方 | 収集結果 JSON のパス。未設定時のみ `$XDG_STATE_HOME` に従う。systemd では `~/.config/home-network-api-server/paths.env` に設定する |
 | `API_HOST` | `0.0.0.0` | api | 待ち受けアドレス |
 | `API_PORT` | `8000` | api | 待ち受けポート |
 
@@ -169,6 +169,8 @@ cd ~/home-network-api-server
 
 # 4. 認証情報を設定して定期取得を開始
 ${EDITOR:-nano} ~/.config/home-network-api-server/router.env
+# API と collector の共通保存先（通常は変更不要）
+cat ~/.config/home-network-api-server/paths.env
 systemctl --user start home-network-collector.service   # 初回取得
 systemctl --user start home-network-collector.timer     # 定期取得
 ```
@@ -186,6 +188,7 @@ curl -s http://localhost:8000/api/clients | jq
 | アプリ本体 | clone した場所（任意） |
 | ユニット | `~/.config/systemd/user/` |
 | 認証情報 | `~/.config/home-network-api-server/router.env`（`0600`） |
+| 共通保存先設定 | `~/.config/home-network-api-server/paths.env`（`0600`） |
 | 収集結果 JSON | `~/.local/state/home-network-api-server/clients.json` |
 
 配置先は `install.sh` 自身の位置から決まるので、どこに clone しても動く。
