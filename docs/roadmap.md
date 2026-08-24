@@ -4,7 +4,7 @@
 
 - [x] uv でプロジェクト初期化（Python 3.13, `uv_build`）
 - [x] `.gitignore`（`.env` と `clients.json` を除外）
-- [x] `.env.example` で必要な環境変数を明示
+- [x] `router.env.sample` でルーター接続用の環境変数を明示
 
 **コミット:** `chore: uv でプロジェクトを初期化`
 

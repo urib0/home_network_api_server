@@ -131,7 +131,7 @@ ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 -oHostKeyAlgorithms=+ssh-rsa hna
 
 ```bash
 uv sync
-cp .env.example .env      # ROUTER_USERNAME / ROUTER_PASSWORD を記入する（.env は git 管理外）
+cp router.env.sample .env  # ROUTER_USERNAME / ROUTER_PASSWORD を記入する（.env は git 管理外）
 
 # 1 回だけ取得
 set -a && source .env && set +a
