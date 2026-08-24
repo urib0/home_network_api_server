@@ -18,6 +18,7 @@
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); white-space: nowrap; }
       th { color: GrayText; font-size: .8rem; }
+      th button { padding: 0; border: 0; background: transparent; color: inherit; font-size: inherit; }
       .connection, .arp { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: .8rem; }
       .name-button { padding: 0; border: 0; background: transparent; color: CanvasText; text-align: left; }
       .name-button:hover { text-decoration: underline; }
@@ -38,7 +39,13 @@
     </div>
     <p id="status">読み込み中…</p>
     <table>
-      <thead><tr><th>IP アドレス</th><th>端末名</th><th>接続</th><th>ARP</th><th>MAC アドレス</th></tr></thead>
+      <thead><tr>
+        <th><button type="button" data-sort="ip">IP アドレス</button></th>
+        <th><button type="button" data-sort="name">端末名</button></th>
+        <th><button type="button" data-sort="connection">接続</button></th>
+        <th><button type="button" data-sort="arp">ARP</button></th>
+        <th><button type="button" data-sort="mac">MAC アドレス</button></th>
+      </tr></thead>
       <tbody id="clients"></tbody>
     </table>
     <script>
@@ -47,13 +54,14 @@
       const summary = document.querySelector('#summary');
       const search = document.querySelector('#search');
       let snapshot = null;
+      let sort = { field: 'ip', direction: 'asc' };
 
       const text = value => value == null || value === '' ? '—' : String(value);
       const escapeHtml = value => text(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
       const formatDate = value => value ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—';
       const macAddress = mac => mac.replaceAll('-', ':');
       const ipParts = ip => (ip || '').split('.').map(part => Number(part));
-      const compareIpAddress = ([, left], [, right]) => {
+      const compareIpAddress = (left, right) => {
         const leftParts = ipParts(left.ip);
         const rightParts = ipParts(right.ip);
         for (let index = 0; index < 4; index += 1) {
@@ -73,17 +81,41 @@
         ? `<span class="arp">あり (${escapeHtml(item.arp.ttl_seconds)}秒)</span>`
         : '<span class="offline">なし</span>';
       const deviceName = item => item.name || (item.hostname ? `host: ${item.hostname}` : null);
+      const connectionLabel = item => item.connection ? `${item.connection.medium} ${item.connection.band || ''}` : '';
+      const sortValue = (mac, item) => ({
+        name: deviceName(item) || '',
+        connection: connectionLabel(item),
+        arp: item.arp?.present ? `1-${String(item.arp.ttl_seconds ?? 0).padStart(10, '0')}` : '0',
+        mac,
+      })[sort.field];
+      const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+
+      function compareClients([leftMac, left], [rightMac, right]) {
+        const comparison = sort.field === 'ip'
+          ? compareIpAddress(left, right)
+          : collator.compare(sortValue(leftMac, left), sortValue(rightMac, right));
+        return sort.direction === 'asc' ? comparison : -comparison;
+      }
+
+      function updateSortButtons() {
+        document.querySelectorAll('[data-sort]').forEach(button => {
+          const active = button.dataset.sort === sort.field;
+          button.textContent = `${button.dataset.sort === 'ip' ? 'IP アドレス' : button.dataset.sort === 'name' ? '端末名' : button.dataset.sort === 'connection' ? '接続' : button.dataset.sort === 'arp' ? 'ARP' : 'MAC アドレス'}${active ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}`;
+          button.setAttribute('aria-pressed', String(active));
+        });
+      }
 
       function render() {
         if (!snapshot) return;
         const query = search.value.trim().toLocaleLowerCase();
         const rows = Object.entries(snapshot.clients)
           .filter(([mac, item]) => [mac, deviceName(item), item.ip].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
-          .sort(compareIpAddress);
+          .sort(compareClients);
         clients.innerHTML = rows.map(([mac, item]) => `<tr>
           <td>${escapeHtml(item.ip)}</td><td><button class="name-button" type="button" data-edit-name="${escapeHtml(mac)}" title="端末名を編集">${escapeHtml(deviceName(item))}</button></td><td>${connection(item)}</td>
           <td>${arp(item)}</td><td><code>${escapeHtml(macAddress(mac))}</code></td></tr>`).join('');
         summary.textContent = `${rows.length} / ${snapshot.count} 台を表示`;
+        updateSortButtons();
       }
 
       async function load() {
@@ -102,6 +134,13 @@
         }
       }
       search.addEventListener('input', render);
+      document.querySelector('thead').addEventListener('click', event => {
+        const button = event.target.closest('[data-sort]');
+        if (!button) return;
+        const field = button.dataset.sort;
+        sort = { field, direction: sort.field === field && sort.direction === 'asc' ? 'desc' : 'asc' };
+        render();
+      });
       clients.addEventListener('click', async event => {
         const button = event.target.closest('[data-edit-name]');
         if (!button || !snapshot) return;

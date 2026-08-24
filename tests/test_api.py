@@ -65,6 +65,8 @@ def test_トップページは閲覧画面を返す(client: TestClient):
     assert response.headers["content-type"].startswith("text/html")
     assert "ネットワークの端末一覧" in response.text
     assert 'href="/devices"' in response.text
+    assert 'data-sort="ip"' in response.text
+    assert 'data-sort="name"' in response.text
 
 
 def test_端末名管理ページを返す(client: TestClient):
