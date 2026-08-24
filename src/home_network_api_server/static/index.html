@@ -70,6 +70,15 @@
         }
         return 0;
       };
+      const compareMacAddress = (left, right) => {
+        const leftParts = left.split('-').map(part => Number.parseInt(part, 16));
+        const rightParts = right.split('-').map(part => Number.parseInt(part, 16));
+        for (let index = 0; index < 6; index += 1) {
+          const difference = leftParts[index] - rightParts[index];
+          if (difference) return difference;
+        }
+        return 0;
+      };
       const connection = item => {
         if (!item.connection) return '<span class="offline">不明</span>';
         const { medium, band } = item.connection;
@@ -93,6 +102,8 @@
       function compareClients([leftMac, left], [rightMac, right]) {
         const comparison = sort.field === 'ip'
           ? compareIpAddress(left, right)
+          : sort.field === 'mac'
+            ? compareMacAddress(leftMac, rightMac)
           : collator.compare(sortValue(leftMac, left), sortValue(rightMac, right));
         return sort.direction === 'asc' ? comparison : -comparison;
       }
